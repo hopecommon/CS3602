@@ -61,7 +61,7 @@ def test_basic_functionality():
     with torch.no_grad():
         outputs_baseline = model(**inputs, use_cache=True)
     print(f"✓ 基线推理成功")
-    print(f"  Loss: {outputs_baseline.loss.item():.4f}")
+    print(f"  输出形状: {outputs_baseline.logits.shape}")
     
     # 使用 StreamingLLM
     print("\n5. 测试 StreamingLLM 推理...")
@@ -69,17 +69,17 @@ def test_basic_functionality():
         with torch.no_grad():
             outputs_streaming = model(**inputs, use_cache=True)
     print(f"✓ StreamingLLM 推理成功")
-    print(f"  Loss: {outputs_streaming.loss.item():.4f}")
+    print(f"  输出形状: {outputs_streaming.logits.shape}")
     
     # 比较结果
-    print("\n6. 比较结果...")
-    loss_diff = abs(outputs_baseline.loss.item() - outputs_streaming.loss.item())
-    print(f"  Loss 差异: {loss_diff:.6f}")
+    print("\n6. 比较 logits...")
+    logits_diff = torch.abs(outputs_baseline.logits - outputs_streaming.logits).mean().item()
+    print(f"  Logits 平均差异: {logits_diff:.6f}")
     
-    if loss_diff < 1.0:
-        print(f"✓ Loss 差异在合理范围内")
+    if logits_diff < 0.1:
+        print(f"✓ Logits 差异在合理范围内")
     else:
-        print(f"⚠ Loss 差异较大,可能需要检查实现")
+        print(f"⚠ Logits 差异较大: {logits_diff:.6f}")
     
     # 测试 KV Cache 压缩
     print("\n7. 测试 KV Cache 压缩...")

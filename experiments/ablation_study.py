@@ -17,7 +17,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from streaming_llm import StreamingLLMWrapper
-from experiments.eval_utils import (
+from eval_utils import (
     load_tokenized_dataset,
     compute_perplexity,
 )

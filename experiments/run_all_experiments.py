@@ -134,6 +134,20 @@ def main():
     
     print(f"{'='*60}\n")
     
+    # 生成图表
+    if len(failed_experiments) == 0:
+        print(f"\n{'='*60}")
+        print(f"生成可视化图表")
+        print(f"{'='*60}\n")
+        
+        plot_cmd = [python_exe, "experiments/plot_results.py"]
+        plot_result = subprocess.run(plot_cmd, capture_output=False, text=True)
+        
+        if plot_result.returncode == 0:
+            print(f"\n✓ 图表生成成功")
+        else:
+            print(f"\n⚠ 图表生成失败,但实验数据已保存")
+    
     return len(failed_experiments) == 0
 
 

@@ -5,6 +5,8 @@
 """
 
 import time
+import random
+import json
 from pathlib import Path
 from typing import Optional, Tuple, Dict, Any
 
@@ -12,6 +14,13 @@ import torch
 from torch import Tensor
 from datasets import load_dataset
 from transformers import AutoTokenizer
+
+# 设置随机种子以确保可复现
+random.seed(42)
+
+# PG19 本地缓存目录
+PG19_CACHE_DIR = Path("data/pg19")
+PG19_CACHE_FILE = PG19_CACHE_DIR / "sample.json"
 
 
 def load_tokenized_dataset(
@@ -42,31 +51,79 @@ def load_tokenized_dataset(
     Returns:
         input_ids: tokenized 输入 [1, seq_len]
     """
-    # 加载数据集
-    dataset_kwargs = {
-        "split": split,
-        "trust_remote_code": trust_remote_code
-    }
-    if use_streaming:
-        dataset_kwargs["streaming"] = True
+    # 特殊处理 PG19: 下载一条数据到本地，后续使用本地缓存
+    if dataset_name.lower() == "pg19":
+        print("检测到 PG19 数据集...")
+        
+        # 检查本地缓存
+        if PG19_CACHE_FILE.exists():
+            print(f"✓ 使用本地缓存: {PG19_CACHE_FILE}")
+            with open(PG19_CACHE_FILE, 'r', encoding='utf-8') as f:
+                cached_data = json.load(f)
+            texts = [cached_data.get(text_column, "")]
+            print(f"  已加载缓存数据 (长度: {len(texts[0])} 字符)")
+        else:
+            print("本地缓存不存在，开始流式下载 PG19 数据集...")
+            print("注意: 只下载一条样本以节省空间和时间")
+            
+            # 流式加载前 N 条作为候选
+            dataset = load_dataset(
+                dataset_name,
+                split=split,
+                streaming=True,
+                trust_remote_code=trust_remote_code
+            )
+            
+            # 收集前 10 条作为候选
+            N = 10
+            buffer = []
+            print(f"正在流式加载前 {N} 条样本...")
+            for i, example in enumerate(dataset):
+                buffer.append(example)
+                print(f"  已加载 {i+1}/{N} 条", end='\r')
+                if i + 1 >= N:
+                    break
+            print()  # 换行
+            
+            # 随机选择一条 (固定种子确保可复现)
+            random_one = random.choice(buffer)
+            texts = [random_one.get(text_column, "")]
+            print(f"✓ 已从前 {N} 条中随机选择 1 条样本 (种子=42)")
+            print(f"  样本长度: {len(texts[0])} 字符")
+            
+            # 保存到本地缓存
+            PG19_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            with open(PG19_CACHE_FILE, 'w', encoding='utf-8') as f:
+                json.dump(random_one, f, ensure_ascii=False, indent=2)
+            print(f"✓ 已保存到本地缓存: {PG19_CACHE_FILE}")
+            print(f"  后续运行将直接使用本地缓存，无需重新下载")
     
-    if dataset_config:
-        dataset = load_dataset(dataset_name, dataset_config, **dataset_kwargs)
     else:
-        dataset = load_dataset(dataset_name, **dataset_kwargs)
-    
-    # 限制样本数
-    if not use_streaming and max_samples:
-        dataset = dataset.select(range(min(max_samples, len(dataset))))
-    
-    # 收集文本
-    texts = []
-    for idx, row in enumerate(dataset):
-        if use_streaming and max_samples and idx >= max_samples:
-            break
-        text = row.get(text_column, "")
-        if text and not text.isspace():
-            texts.append(text)
+        # 其他数据集的正常加载逻辑
+        dataset_kwargs = {
+            "split": split,
+            "trust_remote_code": trust_remote_code
+        }
+        if use_streaming:
+            dataset_kwargs["streaming"] = True
+        
+        if dataset_config:
+            dataset = load_dataset(dataset_name, dataset_config, **dataset_kwargs)
+        else:
+            dataset = load_dataset(dataset_name, **dataset_kwargs)
+        
+        # 限制样本数
+        if not use_streaming and max_samples:
+            dataset = dataset.select(range(min(max_samples, len(dataset))))
+        
+        # 收集文本
+        texts = []
+        for idx, row in enumerate(dataset):
+            if use_streaming and max_samples and idx >= max_samples:
+                break
+            text = row.get(text_column, "")
+            if text and not text.isspace():
+                texts.append(text)
     
     if not texts:
         raise ValueError(f"No non-empty rows found for dataset {dataset_name}")

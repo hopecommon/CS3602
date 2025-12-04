@@ -1,0 +1,7 @@
+Decoding Latency (Cache=512)|SUCCESS|51s
+Decoding Latency (Cache=1024)|SUCCESS|50s
+Decoding Latency (Cache=2048)|SUCCESS|50s
+Decoding Latency (Cache=4096)|SUCCESS|49s
+Long Sequence Decoding (5000 tokens, Cache=1024)|SUCCESS|109s
+Decoding Latency (n_sink=0, Cache=1024)|SUCCESS|51s
+Decoding Latency (n_sink=8, Cache=1024)|SUCCESS|50s

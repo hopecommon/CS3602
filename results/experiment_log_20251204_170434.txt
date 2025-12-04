@@ -1,0 +1,853 @@
+################################################################################
+# StreamingLLM 完整实验
+# 开始时间: Thu Dec  4 05:04:34 PM CST 2025
+################################################################################
+
+[1;33m=== 阶段 1: Baseline 实验 ===[0m
+
+[0;34m========================================[0m
+[0;34m实验 1: WikiText-103 Baseline[0m
+[0;34m========================================[0m
+命令: kvpress/.venv/bin/python experiments/eval_streaming_llm.py         --dataset-name wikitext         --dataset-config wikitext-103-v1         --max-samples 64         --max-eval-tokens 4096         --n-sink 0         --window-size 999999         --output results/streaming_llm/wikitext_baseline.json
+开始时间: Thu Dec  4 05:04:34 PM CST 2025
+`torch_dtype` is deprecated! Use `dtype` instead!
+
+============================================================
+StreamingLLM 评估
+============================================================
+模型: EleutherAI/pythia-70m
+数据集: wikitext:wikitext-103-v1
+设备: cuda
+数据类型: torch.float16
+n_sink: 0
+window_size: 999999
+============================================================
+
+加载 tokenizer...
+加载数据集...
+数据集大小: 3407 tokens
+加载模型...
+
+============================================================
+评估基线 (无压缩)
+============================================================
+基线 PPL: 40.31
+基线 Runtime: 0.328s
+基线 Prefill: 0.328s
+
+============================================================
+评估 StreamingLLM (我们的实现)
+============================================================
+StreamingLLM PPL: 40.31
+StreamingLLM Runtime: 0.033s
+StreamingLLM Prefill: 0.033s
+
+============================================================
+实验结果
+============================================================
+{
+  "model": "EleutherAI/pythia-70m",
+  "dataset": "wikitext:wikitext-103-v1",
+  "split": "test",
+  "max_length": 1024,
+  "stride": 512,
+  "max_samples": 64,
+  "max_eval_tokens": 4096,
+  "total_tokens": 3407,
+  "streaming_llm": {
+    "n_sink": 0,
+    "window_size": 999999,
+    "max_cache_size": 999999
+  },
+  "baseline": {
+    "perplexity": 40.312744140625,
+    "runtime_sec": 0.32754841807764024,
+    "prefill_sec": 0.3275470120133832
+  },
+  "streaming": {
+    "perplexity": 40.312744140625,
+    "runtime_sec": 0.03286860603839159,
+    "prefill_sec": 0.032867830945178866
+  },
+  "metrics": {
+    "speedup": 9.965388179074377,
+    "compression_ratio": 0.0,
+    "ppl_increase_percent": 0.0,
+    "peak_memory_mb": 759.7294921875
+  },
+  "device": "cuda",
+  "dtype": "torch.float16"
+}
+============================================================
+
+结果已保存到: results/streaming_llm/wikitext_baseline.json
+
+============================================================
+总结
+============================================================
+加速比: 9.97x
+压缩比: 0.00%
+PPL 增加: 0.00%
+峰值显存: 759.7 MB
+============================================================
+
+[0;32m✓ 成功[0m (耗时: 15s)
+
+
+[0;34m========================================[0m
+[0;34m实验 2: PG19 Baseline[0m
+[0;34m========================================[0m
+命令: kvpress/.venv/bin/python experiments/eval_streaming_llm.py         --dataset-name pg19         --max-samples 1         --max-eval-tokens 4096         --n-sink 0         --window-size 999999         --output results/streaming_llm/pg19_baseline.json
+开始时间: Thu Dec  4 05:04:49 PM CST 2025
+`torch_dtype` is deprecated! Use `dtype` instead!
+
+============================================================
+StreamingLLM 评估
+============================================================
+模型: EleutherAI/pythia-70m
+数据集: pg19:wikitext-103-v1
+设备: cuda
+数据类型: torch.float16
+n_sink: 0
+window_size: 999999
+============================================================
+
+加载 tokenizer...
+加载数据集...
+检测到 PG19 数据集...
+本地缓存不存在，开始流式下载 PG19 数据集...
+注意: 只下载一条样本以节省空间和时间
+正在流式加载前 10 条样本...
+  已加载 1/10 条  已加载 2/10 条  已加载 3/10 条  已加载 4/10 条  已加载 5/10 条  已加载 6/10 条  已加载 7/10 条  已加载 8/10 条  已加载 9/10 条  已加载 10/10 条
+✓ 已从前 10 条中随机选择 1 条样本 (种子=42)
+  样本长度: 318194 字符
+✓ 已保存到本地缓存: data/pg19/sample.json
+  后续运行将直接使用本地缓存，无需重新下载
+数据集大小: 4096 tokens
+加载模型...
+
+============================================================
+评估基线 (无压缩)
+============================================================
+基线 PPL: 57.92
+基线 Runtime: 0.315s
+基线 Prefill: 0.315s
+
+============================================================
+评估 StreamingLLM (我们的实现)
+============================================================
+StreamingLLM PPL: 57.92
+StreamingLLM Runtime: 0.037s
+StreamingLLM Prefill: 0.037s
+
+============================================================
+实验结果
+============================================================
+{
+  "model": "EleutherAI/pythia-70m",
+  "dataset": "pg19:wikitext-103-v1",
+  "split": "test",
+  "max_length": 1024,
+  "stride": 512,
+  "max_samples": 1,
+  "max_eval_tokens": 4096,
+  "total_tokens": 4096,
+  "streaming_llm": {
+    "n_sink": 0,
+    "window_size": 999999,
+    "max_cache_size": 999999
+  },
+  "baseline": {
+    "perplexity": 57.91722106933594,
+    "runtime_sec": 0.31510235904715955,
+    "prefill_sec": 0.31510055204853415
+  },
+  "streaming": {
+    "perplexity": 57.91722106933594,
+    "runtime_sec": 0.036574169993400574,
+    "prefill_sec": 0.036573481047526
+  },
+  "metrics": {
+    "speedup": 8.61543431071755,
+    "compression_ratio": 0.0,
+    "ppl_increase_percent": 0.0,
+    "peak_memory_mb": 759.7294921875
+  },
+  "device": "cuda",
+  "dtype": "torch.float16"
+}
+============================================================
+
+结果已保存到: results/streaming_llm/pg19_baseline.json
+
+============================================================
+总结
+============================================================
+加速比: 8.62x
+压缩比: 0.00%
+PPL 增加: 0.00%
+峰值显存: 759.7 MB
+============================================================
+
+[0;32m✓ 成功[0m (耗时: 47s)
+
+[1;33m=== 阶段 2: 我们的 StreamingLLM 实验 ===[0m
+
+[0;34m========================================[0m
+[0;34m实验 3: WikiText-103 StreamingLLM[0m
+[0;34m========================================[0m
+命令: kvpress/.venv/bin/python experiments/eval_streaming_llm.py         --dataset-name wikitext         --dataset-config wikitext-103-v1         --max-samples 64         --max-eval-tokens 4096         --n-sink 4         --window-size 1024         --output results/streaming_llm/wikitext_result.json
+开始时间: Thu Dec  4 05:05:36 PM CST 2025
+`torch_dtype` is deprecated! Use `dtype` instead!
+
+============================================================
+StreamingLLM 评估
+============================================================
+模型: EleutherAI/pythia-70m
+数据集: wikitext:wikitext-103-v1
+设备: cuda
+数据类型: torch.float16
+n_sink: 4
+window_size: 1024
+============================================================
+
+加载 tokenizer...
+加载数据集...
+数据集大小: 3407 tokens
+加载模型...
+
+============================================================
+评估基线 (无压缩)
+============================================================
+基线 PPL: 40.31
+基线 Runtime: 0.328s
+基线 Prefill: 0.328s
+
+============================================================
+评估 StreamingLLM (我们的实现)
+============================================================
+StreamingLLM PPL: 40.31
+StreamingLLM Runtime: 0.032s
+StreamingLLM Prefill: 0.032s
+
+============================================================
+实验结果
+============================================================
+{
+  "model": "EleutherAI/pythia-70m",
+  "dataset": "wikitext:wikitext-103-v1",
+  "split": "test",
+  "max_length": 1024,
+  "stride": 512,
+  "max_samples": 64,
+  "max_eval_tokens": 4096,
+  "total_tokens": 3407,
+  "streaming_llm": {
+    "n_sink": 4,
+    "window_size": 1024,
+    "max_cache_size": 1028
+  },
+  "baseline": {
+    "perplexity": 40.312744140625,
+    "runtime_sec": 0.32750740996561944,
+    "prefill_sec": 0.3275061040185392
+  },
+  "streaming": {
+    "perplexity": 40.312744140625,
+    "runtime_sec": 0.03157408395782113,
+    "prefill_sec": 0.03157354996073991
+  },
+  "metrics": {
+    "speedup": 10.3726654557303,
+    "compression_ratio": 0.6982682712063399,
+    "ppl_increase_percent": 0.0,
+    "peak_memory_mb": 759.7294921875
+  },
+  "device": "cuda",
+  "dtype": "torch.float16"
+}
+============================================================
+
+结果已保存到: results/streaming_llm/wikitext_result.json
+
+============================================================
+总结
+============================================================
+加速比: 10.37x
+压缩比: 69.83%
+PPL 增加: 0.00%
+峰值显存: 759.7 MB
+============================================================
+
+[0;32m✓ 成功[0m (耗时: 19s)
+
+
+[0;34m========================================[0m
+[0;34m实验 4: PG19 StreamingLLM[0m
+[0;34m========================================[0m
+命令: kvpress/.venv/bin/python experiments/eval_streaming_llm.py         --dataset-name pg19         --max-samples 1         --max-eval-tokens 4096         --n-sink 4         --window-size 1024         --output results/streaming_llm/pg19_result.json
+开始时间: Thu Dec  4 05:05:55 PM CST 2025
+`torch_dtype` is deprecated! Use `dtype` instead!
+
+============================================================
+StreamingLLM 评估
+============================================================
+模型: EleutherAI/pythia-70m
+数据集: pg19:wikitext-103-v1
+设备: cuda
+数据类型: torch.float16
+n_sink: 4
+window_size: 1024
+============================================================
+
+加载 tokenizer...
+加载数据集...
+检测到 PG19 数据集...
+✓ 使用本地缓存: data/pg19/sample.json
+  已加载缓存数据 (长度: 318194 字符)
+数据集大小: 4096 tokens
+加载模型...
+
+============================================================
+评估基线 (无压缩)
+============================================================
+基线 PPL: 57.92
+基线 Runtime: 0.332s
+基线 Prefill: 0.332s
+
+============================================================
+评估 StreamingLLM (我们的实现)
+============================================================
+StreamingLLM PPL: 57.92
+StreamingLLM Runtime: 0.036s
+StreamingLLM Prefill: 0.036s
+
+============================================================
+实验结果
+============================================================
+{
+  "model": "EleutherAI/pythia-70m",
+  "dataset": "pg19:wikitext-103-v1",
+  "split": "test",
+  "max_length": 1024,
+  "stride": 512,
+  "max_samples": 1,
+  "max_eval_tokens": 4096,
+  "total_tokens": 4096,
+  "streaming_llm": {
+    "n_sink": 4,
+    "window_size": 1024,
+    "max_cache_size": 1028
+  },
+  "baseline": {
+    "perplexity": 57.91722106933594,
+    "runtime_sec": 0.3323866790160537,
+    "prefill_sec": 0.33238473208621144
+  },
+  "streaming": {
+    "perplexity": 57.91722106933594,
+    "runtime_sec": 0.036372217000462115,
+    "prefill_sec": 0.03637158893980086
+  },
+  "metrics": {
+    "speedup": 9.138477289185607,
+    "compression_ratio": 0.7490234375,
+    "ppl_increase_percent": 0.0,
+    "peak_memory_mb": 759.7294921875
+  },
+  "device": "cuda",
+  "dtype": "torch.float16"
+}
+============================================================
+
+结果已保存到: results/streaming_llm/pg19_result.json
+
+============================================================
+总结
+============================================================
+加速比: 9.14x
+压缩比: 74.90%
+PPL 增加: 0.00%
+峰值显存: 759.7 MB
+============================================================
+
+[0;32m✓ 成功[0m (耗时: 9s)
+
+[1;33m=== 阶段 3: kvpress 官方库对比实验 ===[0m
+
+[0;34m========================================[0m
+[0;34m实验 5: WikiText-103 kvpress StreamingLLM[0m
+[0;34m========================================[0m
+命令: kvpress/.venv/bin/python experiments/eval_kvpress.py         --dataset-name wikitext         --dataset-config wikitext-103-v1         --max-samples 64         --max-eval-tokens 4096         --n-sink 4         --window-size 1024         --output results/kvpress/wikitext_result.json
+开始时间: Thu Dec  4 05:06:04 PM CST 2025
+`torch_dtype` is deprecated! Use `dtype` instead!
+
+============================================================
+KVPress StreamingLLM Evaluation
+============================================================
+Model: EleutherAI/pythia-70m
+Dataset: wikitext:wikitext-103-v1
+Device: cuda
+Data type: torch.float16
+n_sink: 4
+window_size: 1024
+============================================================
+
+Loading tokenizer...
+Loading dataset...
+Dataset size: 3407 tokens
+Loading model...
+
+============================================================
+Evaluating Baseline (no compression)
+============================================================
+Baseline PPL: 40.31
+Baseline Runtime: 0.334s
+Baseline Prefill: 0.334s
+
+Calculated compression_ratio: 0.6983
+(Keeping 1028 tokens out of 3407)
+
+============================================================
+Evaluating kvpress StreamingLLM
+============================================================
+kvpress StreamingLLM PPL: 40.31
+kvpress StreamingLLM Runtime: 0.086s
+kvpress StreamingLLM Prefill: 0.086s
+
+============================================================
+实验结果
+============================================================
+{
+  "model": "EleutherAI/pythia-70m",
+  "dataset": "wikitext:wikitext-103-v1",
+  "split": "test",
+  "max_length": 1024,
+  "stride": 512,
+  "max_samples": 64,
+  "max_eval_tokens": 4096,
+  "total_tokens": 3407,
+  "streaming_llm": {
+    "n_sink": 4,
+    "window_size": 1024,
+    "max_cache_size": 1028,
+    "compression_ratio": 0.6982682712063399
+  },
+  "baseline": {
+    "perplexity": 40.312744140625,
+    "runtime_sec": 0.3344038249924779,
+    "prefill_sec": 0.33440387703012675
+  },
+  "kvpress": {
+    "perplexity": 40.312744140625,
+    "runtime_sec": 0.08557298104278743,
+    "prefill_sec": 0.08557334099896252
+  },
+  "metrics": {
+    "speedup": 3.9078202128458317,
+    "compression_ratio": 0.6982682712063399,
+    "ppl_increase_percent": 0.0,
+    "peak_memory_mb": 759.7294921875
+  },
+  "device": "cuda",
+  "dtype": "torch.float16"
+}
+============================================================
+
+结果已保存到: results/kvpress/wikitext_result.json
+
+============================================================
+Summary
+============================================================
+Speedup: 3.91x
+Compression ratio: 69.83%
+PPL increase: 0.00%
+Peak memory: 759.7 MB
+============================================================
+
+[0;32m✓ 成功[0m (耗时: 15s)
+
+
+[0;34m========================================[0m
+[0;34m实验 6: PG19 kvpress StreamingLLM[0m
+[0;34m========================================[0m
+命令: kvpress/.venv/bin/python experiments/eval_kvpress.py         --dataset-name pg19         --max-samples 1         --max-eval-tokens 4096         --n-sink 4         --window-size 1024         --output results/kvpress/pg19_result.json
+开始时间: Thu Dec  4 05:06:19 PM CST 2025
+`torch_dtype` is deprecated! Use `dtype` instead!
+
+============================================================
+KVPress StreamingLLM Evaluation
+============================================================
+Model: EleutherAI/pythia-70m
+Dataset: pg19:wikitext-103-v1
+Device: cuda
+Data type: torch.float16
+n_sink: 4
+window_size: 1024
+============================================================
+
+Loading tokenizer...
+Loading dataset...
+检测到 PG19 数据集...
+✓ 使用本地缓存: data/pg19/sample.json
+  已加载缓存数据 (长度: 318194 字符)
+Dataset size: 4096 tokens
+Loading model...
+
+============================================================
+Evaluating Baseline (no compression)
+============================================================
+Baseline PPL: 57.92
+Baseline Runtime: 0.331s
+Baseline Prefill: 0.331s
+
+Calculated compression_ratio: 0.7490
+(Keeping 1028 tokens out of 4096)
+
+============================================================
+Evaluating kvpress StreamingLLM
+============================================================
+kvpress StreamingLLM PPL: 57.92
+kvpress StreamingLLM Runtime: 0.089s
+kvpress StreamingLLM Prefill: 0.089s
+
+============================================================
+实验结果
+============================================================
+{
+  "model": "EleutherAI/pythia-70m",
+  "dataset": "pg19:wikitext-103-v1",
+  "split": "test",
+  "max_length": 1024,
+  "stride": 512,
+  "max_samples": 1,
+  "max_eval_tokens": 4096,
+  "total_tokens": 4096,
+  "streaming_llm": {
+    "n_sink": 4,
+    "window_size": 1024,
+    "max_cache_size": 1028,
+    "compression_ratio": 0.7490234375
+  },
+  "baseline": {
+    "perplexity": 57.91722106933594,
+    "runtime_sec": 0.3308378660585731,
+    "prefill_sec": 0.33083780109882355
+  },
+  "kvpress": {
+    "perplexity": 57.91722106933594,
+    "runtime_sec": 0.08940530102699995,
+    "prefill_sec": 0.0894057210534811
+  },
+  "metrics": {
+    "speedup": 3.7004278522440384,
+    "compression_ratio": 0.7490234375,
+    "ppl_increase_percent": 0.0,
+    "peak_memory_mb": 759.7294921875
+  },
+  "device": "cuda",
+  "dtype": "torch.float16"
+}
+============================================================
+
+结果已保存到: results/kvpress/pg19_result.json
+
+============================================================
+Summary
+============================================================
+Speedup: 3.70x
+Compression ratio: 74.90%
+PPL increase: 0.00%
+Peak memory: 759.7 MB
+============================================================
+
+[0;32m✓ 成功[0m (耗时: 8s)
+
+[1;33m=== 阶段 4: 消融实验 ===[0m
+
+[0;34m========================================[0m
+[0;34m实验 7: Window Size 消融实验[0m
+[0;34m========================================[0m
+命令: kvpress/.venv/bin/python experiments/ablation_study.py         --dataset-name wikitext         --dataset-config wikitext-103-v1         --max-samples 64         --max-eval-tokens 4096         --ablation-type window_size         --output results/streaming_llm/ablation_window_size.json
+开始时间: Thu Dec  4 05:06:27 PM CST 2025
+`torch_dtype` is deprecated! Use `dtype` instead!
+
+============================================================
+StreamingLLM 消融实验
+============================================================
+模型: EleutherAI/pythia-70m
+数据集: wikitext:wikitext-103-v1
+消融类型: window_size
+设备: cuda
+============================================================
+
+加载 tokenizer...
+加载数据集...
+数据集大小: 3407 tokens
+加载模型...
+
+============================================================
+消融实验: Window Size (n_sink=4)
+============================================================
+
+测试 window_size=128...
+  PPL: 40.31, Runtime: 0.308s, Compression: 96.13%
+测试 window_size=256...
+  PPL: 40.31, Runtime: 0.032s, Compression: 92.37%
+测试 window_size=512...
+  PPL: 40.31, Runtime: 0.032s, Compression: 84.85%
+测试 window_size=1024...
+  PPL: 40.31, Runtime: 0.032s, Compression: 69.83%
+测试 window_size=2048...
+  PPL: 40.31, Runtime: 0.031s, Compression: 39.77%
+测试 window_size=4096...
+  PPL: 40.31, Runtime: 0.032s, Compression: 0.00%
+
+============================================================
+消融实验完成
+============================================================
+结果已保存到: results/streaming_llm/ablation_window_size.json
+============================================================
+
+结果总结:
+{
+  "model": "EleutherAI/pythia-70m",
+  "dataset": "wikitext:wikitext-103-v1",
+  "ablation_type": "window_size",
+  "total_tokens": 3407,
+  "results": [
+    {
+      "window_size": 128,
+      "n_sink": 4,
+      "max_cache_size": 132,
+      "perplexity": 40.312744140625,
+      "runtime_sec": 0.3080794629640877,
+      "prefill_sec": 0.3080777560826391,
+      "compression_ratio": 0.9612562371587907
+    },
+    {
+      "window_size": 256,
+      "n_sink": 4,
+      "max_cache_size": 260,
+      "perplexity": 40.312744140625,
+      "runtime_sec": 0.031746126944199204,
+      "prefill_sec": 0.031745587941259146,
+      "compression_ratio": 0.923686527737012
+    },
+    {
+      "window_size": 512,
+      "n_sink": 4,
+      "max_cache_size": 516,
+      "perplexity": 40.312744140625,
+      "runtime_sec": 0.03157143003772944,
+      "prefill_sec": 0.03157111699692905,
+      "compression_ratio": 0.8485471088934546
+    },
+    {
+      "window_size": 1024,
+      "n_sink": 4,
+      "max_cache_size": 1028,
+      "perplexity": 40.312744140625,
+      "runtime_sec": 0.031586754019372165,
+      "prefill_sec": 0.0315863840514794,
+      "compression_ratio": 0.6982682712063399
+    },
+    {
+      "window_size": 2048,
+      "n_sink": 4,
+      "max_cache_size": 2052,
+      "perplexity": 40.312744140625,
+      "runtime_sec": 0.03144336608238518,
+      "prefill_sec": 0.03144300100393593,
+      "compression_ratio": 0.3977105958321103
+    },
+    {
+      "window_size": 4096,
+      "n_sink": 4,
+      "max_cache_size": 4100,
+      "perplexity": 40.312744140625,
+      "runtime_sec": 0.03151278500445187,
+      "prefill_sec": 0.03151237196289003,
+      "compression_ratio": 0.0
+    }
+  ]
+}
+[0;32m✓ 成功[0m (耗时: 20s)
+
+
+[0;34m========================================[0m
+[0;34m实验 8: N_sink 消融实验[0m
+[0;34m========================================[0m
+命令: kvpress/.venv/bin/python experiments/ablation_study.py         --dataset-name wikitext         --dataset-config wikitext-103-v1         --max-samples 64         --max-eval-tokens 4096         --ablation-type n_sink         --output results/streaming_llm/ablation_n_sink.json
+开始时间: Thu Dec  4 05:06:47 PM CST 2025
+`torch_dtype` is deprecated! Use `dtype` instead!
+
+============================================================
+StreamingLLM 消融实验
+============================================================
+模型: EleutherAI/pythia-70m
+数据集: wikitext:wikitext-103-v1
+消融类型: n_sink
+设备: cuda
+============================================================
+
+加载 tokenizer...
+加载数据集...
+数据集大小: 3407 tokens
+加载模型...
+
+============================================================
+消融实验: N_sink (window_size=1024)
+============================================================
+
+测试 n_sink=0...
+  PPL: 40.31, Runtime: 0.333s, Compression: 69.94%
+测试 n_sink=1...
+  PPL: 40.31, Runtime: 0.033s, Compression: 69.91%
+测试 n_sink=2...
+  PPL: 40.31, Runtime: 0.032s, Compression: 69.89%
+测试 n_sink=4...
+  PPL: 40.31, Runtime: 0.032s, Compression: 69.83%
+测试 n_sink=8...
+  PPL: 40.31, Runtime: 0.032s, Compression: 69.71%
+测试 n_sink=16...
+  PPL: 40.31, Runtime: 0.032s, Compression: 69.47%
+
+============================================================
+消融实验完成
+============================================================
+结果已保存到: results/streaming_llm/ablation_n_sink.json
+============================================================
+
+结果总结:
+{
+  "model": "EleutherAI/pythia-70m",
+  "dataset": "wikitext:wikitext-103-v1",
+  "ablation_type": "n_sink",
+  "total_tokens": 3407,
+  "results": [
+    {
+      "n_sink": 0,
+      "window_size": 1024,
+      "max_cache_size": 1024,
+      "perplexity": 40.312744140625,
+      "runtime_sec": 0.33347127900924534,
+      "prefill_sec": 0.33346987108234316,
+      "compression_ratio": 0.6994423246257705
+    },
+    {
+      "n_sink": 1,
+      "window_size": 1024,
+      "max_cache_size": 1025,
+      "perplexity": 40.312744140625,
+      "runtime_sec": 0.03271344897802919,
+      "prefill_sec": 0.032712365966290236,
+      "compression_ratio": 0.6991488112709128
+    },
+    {
+      "n_sink": 2,
+      "window_size": 1024,
+      "max_cache_size": 1026,
+      "perplexity": 40.312744140625,
+      "runtime_sec": 0.03223823802545667,
+      "prefill_sec": 0.03223783697467297,
+      "compression_ratio": 0.6988552979160552
+    },
+    {
+      "n_sink": 4,
+      "window_size": 1024,
+      "max_cache_size": 1028,
+      "perplexity": 40.312744140625,
+      "runtime_sec": 0.03219667903613299,
+      "prefill_sec": 0.03219632396940142,
+      "compression_ratio": 0.6982682712063399
+    },
+    {
+      "n_sink": 8,
+      "window_size": 1024,
+      "max_cache_size": 1032,
+      "perplexity": 40.312744140625,
+      "runtime_sec": 0.03225538495462388,
+      "prefill_sec": 0.03225491300690919,
+      "compression_ratio": 0.6970942177869093
+    },
+    {
+      "n_sink": 16,
+      "window_size": 1024,
+      "max_cache_size": 1040,
+      "perplexity": 40.312744140625,
+      "runtime_sec": 0.032175424974411726,
+      "prefill_sec": 0.0321749490685761,
+      "compression_ratio": 0.6947461109480482
+    }
+  ]
+}
+[0;32m✓ 成功[0m (耗时: 14s)
+
+[1;33m=== 阶段 5: 生成可视化图表 ===[0m
+
+[0;34m========================================[0m
+[0;34m实验 9: 生成可视化图表[0m
+[0;34m========================================[0m
+命令: kvpress/.venv/bin/python experiments/generate_final_figures.py
+开始时间: Thu Dec  4 05:07:01 PM CST 2025
+============================================================
+StreamingLLM 实验结果可视化
+============================================================
+✓ 图表保存目录: results/figures
+
+生成主实验对比图...
+✓ 已保存: results/figures/main_comparison.png
+
+生成Window Size消融图...
+✓ 已保存: results/figures/ablation_window_size.png
+
+生成N_sink消融图...
+✓ 已保存: results/figures/ablation_n_sink.png
+
+生成综合结果表格...
+✓ 已保存: results/figures/results_summary.png
+
+============================================================
+✓ 所有图表生成完成!
+✓ 保存位置: results/figures
+============================================================
+
+生成的图表文件:
+  - ablation_n_sink.png (0.36 MB)
+  - ablation_window_size.png (0.33 MB)
+  - main_comparison.png (0.30 MB)
+  - results_summary.png (0.23 MB)
+  - results_summary_table.png (0.11 MB)
+[0;32m✓ 成功[0m (耗时: 5s)
+
+
+################################################################################
+# 实验完成报告
+################################################################################
+
+结束时间: Thu Dec  4 05:07:06 PM CST 2025
+总耗时: 152s (2分钟)
+
+实验统计:
+  总实验数: 9
+  [0;32m成功: 9[0m
+  [0;31m失败: 0[0m
+
+详细结果:
+----------------------------------------
+  [0;32m✓[0m WikiText-103 Baseline (15s)
+  [0;32m✓[0m PG19 Baseline (47s)
+  [0;32m✓[0m WikiText-103 StreamingLLM (19s)
+  [0;32m✓[0m PG19 StreamingLLM (9s)
+  [0;32m✓[0m WikiText-103 kvpress StreamingLLM (15s)
+  [0;32m✓[0m PG19 kvpress StreamingLLM (8s)
+  [0;32m✓[0m Window Size 消融实验 (20s)
+  [0;32m✓[0m N_sink 消融实验 (14s)
+  [0;32m✓[0m 生成可视化图表 (5s)
+----------------------------------------
+
+日志文件: results/experiment_log_20251204_170434.txt
+总结文件: results/experiment_summary_20251204_170434.txt
+
+[0;32m✓ 所有实验成功完成![0m
