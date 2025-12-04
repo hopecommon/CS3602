@@ -2,6 +2,8 @@
 
 本仓库聚焦在 Pythia-70M 上从零复现 StreamingLLM，全面对比 kvpress 与 MIT 参考实现，进而分析加速/质量的权衡。README 同时兼具项目主页与实验报告，包含运行指南、表格级指标、复现数据与结论分析，满足科研汇报标准。
 
+> 备注：`kvpress/` 与 `mit-streaming-llm/` 仅作为参考实现/对比资料，复现工作（StreamingLLMWrapper、decode-loop 评估、分析报告）是本仓库独立完成的，并在文档中明确区分“本实现”与“比较对象”。
+
 ## 1. 项目与任务定位
 - **目标**：验证 StreamingLLM 算法（attention sink + recent window）在 Pythia 上的加速能力与 PPL 影响，复现 MIT/kvpress 的思路，与 kvpress 进行公平对比。
 - **任务要求**：在 `WikiText-103` / `PG19` 数据集上跑出 PPL 与 runtime；结果记录在 README 中；所有代码有 Git commit 记录。
