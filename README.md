@@ -13,7 +13,11 @@
 我们在两个数据集、四种方法、三种测量路径下共计 24 条 JSON（保存在 `results/comprehensive/*.json`）。每条 speedup 均相对于对应 baseline runtime 计算。
 
 ### 2.1 核心数据表（WikiText-103、PG19）
+
 **Decode-loop（`run_decode_perplexity.py`）**
+
+Decode-loop 是本文的标准评测流程：在固定的 Pythia-70M / 数据集 / window_size / n_sink 下（见 `run_comprehensive_comparisons.sh`），对整条样本完成一次逐 token 解码，记录总 runtime 与 PPL。由于每种方法解码的 token 总数相同，runtime 比值等价于平均 per-token decoding latency（TPOT），这与 StreamingLLM 原文/后续的 DuoAttention、ZigzagAttention 等研究采用的指标是一致的。Baseline 在每步都“重算最近窗口”的 sliding window 策略，即每个 token 都重新前向 max_cache_size 范围的 context （`_compute_streaming_decode_perplexity` 中 streaming_wrapper 为 None 的代码路径），因而复杂度仍为 O(W²)，更贴近原论文的 baseline。
+
 | Dataset | Method | PPL | Runtime (s) | Δ Runtime vs Baseline | Δ PPL vs Baseline |
 |---------|--------|-----|-------------|----------------------|--------------------|
 | WikiText-103 | Baseline | 36.72 | 18.80 | 0% | 0% |
@@ -39,6 +43,8 @@
 | PG19 | MIT-style | 57.99 | 15.31 | 1.52 | MIT-like cache |
 | PG19 | kvpress StreamingLLM | 58.04 | 0.045 | 7.03 | kvpress 官方 chunked |
 
+> **注**：chunked 模式是 kvpress/mit 等仓库的预设 pipeline（prefill + “一次性”短 sequence 解码，更多模拟 offline 场景），在这里只作为“官方/参考结果”的补充；它的 runtime 与 decode-loop 的 per-token latency 不在同一评测体系，因此不与 decode-loop 表格直接横向对比。
+
 **kvpress 官方评估**（`eval_kvpress.py` 里 baseline 与 kvpress 一套数据）
 | Dataset | Method | PPL | Runtime (s) | Speedup |
 |---------|--------|-----|-------------|---------|
@@ -47,9 +53,11 @@
 | PG19 | Baseline | 57.68 | 23.81 | 1.00 |
 | PG19 | kvpress | 58.04 | 0.045 | 7.03 |
 
+> **说明**：上述 kvpress 官方速度是其 chunked microbenchmark（`eval_kvpress.py` 默认流程）报告的单 chunk latency，等价于其 GitHub 上 7× 的数字；它并非 decode-loop 下的 steady-state latency，后者在 `run_kvpress_streaming_decode.sh` 中会回升至 ~10s，与 README 中 decode-loop 表格的数据一致。
+
 ### 2.2 分析与科研结论
 1. **PPL 控制**：ours 与 MIT-style 在 chunked/decode-loop 中 PPL 提升 <0.3%，说明压缩对建模影响可控；kvpress 在 decode-loop 中 PPL 明显偏高（WikiText 39.14、PG19 69.51），但在 chunked / kvpress 官方评测里仍维持 baseline 水平，暗示其 rerotation/压缩在逐 token 模式下尚未完全对齐，因此 decode-loop 才是我们当前的统一质量度量。
-2. **Runtime 差异**：chunked 与 decode-loop 的 runtime 差异源于评测方式：chunked 一次推理多 token，duplicate caching；decode-loop 每个 token 单独解码并填满 cache，因此时间更长。kvpress chunked 跑出 0.04s 的加速是它原生 pipeline 的结果，在 decode-loop 下 runtime 回升至 ~10s，与 ours/MIT 更可比；ours decode-loop 跑 10.95s，MIT-style 12.10s，kvpress 10.04s，差距 <1s 已是 slice-based cache + rerotation 优化的结果，下一步可进一步 profiling rerotation/Hook 内核。
+2. **Runtime 差异**：chunked 与 decode-loop 的 runtime 差异源于评测方式：chunked 一次推理多 token，duplicate caching；decode-loop 每个 token 单独解码并填满 cache，因此时间更长。kvpress chunked 跑出 0.04s 的加速是它原生 pipeline 的结果，在 decode-loop 下 runtime 回升至 ~10s，与 ours/MIT 更可比；ours decode-loop 跑 10.95s，MIT-style 12.10s，kvpress 10.04s，差距 <1s 已是 slice-based cache + rerotation 优化的结果，下一步可进一步 profiling rerotation/Hook 内核。由于我们选用的是 70M 级别模型加上 1k~2k 的 window，实际 FLOPs 远低于 Llama-7B/13B，那些模型里算子本身是瓶颈、Python 控制开销占比小；在本项目中 Python 管理、tokenizer、hook 更新等开销占比较大，所以 1.5~1.7× 的 end-to-end speedup 已经代表了常数项层面的优化。这一点也解释了为什么 kvpress/mit 的 chunked microbenchmark 看起来更有优势——它们在不同的评测下规避了逐 token 的重复计算。
 3. **实验完整性**：`run_comprehensive_comparisons.sh` 是当前推荐流程，负责一次性生成 24 个 JSON（4 方法 × 3 测评 × 2 数据集）；报告中所有表格、图表都可从 `results/comprehensive/` 与 `results/figures/` 校验，全流程可复现可追溯。
 
 ### 2.3 图表与可视化
