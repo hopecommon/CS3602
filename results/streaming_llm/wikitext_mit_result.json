@@ -19,18 +19,18 @@
   "baseline_source": "loaded:results/streaming_llm/wikitext_baseline.json",
   "baseline": {
     "perplexity": 36.30228805541992,
-    "runtime_sec": 17.187583726015873,
-    "prefill_sec": 0.3584309050347656
+    "runtime_sec": 17.54459418798797,
+    "prefill_sec": 0.3902663900516927
   },
   "streaming": {
     "perplexity": 36.790061950683594,
-    "runtime_sec": 10.92088214296382,
-    "prefill_sec": 0.2822017959551886
+    "runtime_sec": 11.075816825963557,
+    "prefill_sec": 0.28325181792024523
   },
   "metrics": {
     "compression_ratio": 0.6982682712063399,
     "peak_memory_mb": 356.240234375,
-    "speedup": 1.5738274162302546,
+    "speedup": 1.5840451737031729,
     "ppl_increase_percent": 1.3436450466125576
   }
 }

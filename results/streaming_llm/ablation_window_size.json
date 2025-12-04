@@ -9,8 +9,8 @@
       "n_sink": 4,
       "max_cache_size": 132,
       "perplexity": 65.69120788574219,
-      "runtime_sec": 15.844393812003545,
-      "prefill_sec": 0.2887163159903139,
+      "runtime_sec": 15.665787777048536,
+      "prefill_sec": 0.674108432023786,
       "compression_ratio": 0.9612562371587907
     },
     {
@@ -18,8 +18,8 @@
       "n_sink": 4,
       "max_cache_size": 260,
       "perplexity": 56.15695571899414,
-      "runtime_sec": 13.653636213042773,
-      "prefill_sec": 0.0077054479625076056,
+      "runtime_sec": 14.354898457997479,
+      "prefill_sec": 0.00787196890451014,
       "compression_ratio": 0.923686527737012
     },
     {
@@ -27,8 +27,8 @@
       "n_sink": 4,
       "max_cache_size": 516,
       "perplexity": 44.0606689453125,
-      "runtime_sec": 13.929624994983897,
-      "prefill_sec": 0.005617816001176834,
+      "runtime_sec": 12.75716402893886,
+      "prefill_sec": 0.008398051024414599,
       "compression_ratio": 0.8485471088934546
     },
     {
@@ -36,8 +36,8 @@
       "n_sink": 4,
       "max_cache_size": 1028,
       "perplexity": 36.790061950683594,
-      "runtime_sec": 10.289620492956601,
-      "prefill_sec": 0.005701076006516814,
+      "runtime_sec": 10.36647664802149,
+      "prefill_sec": 0.005614658002741635,
       "compression_ratio": 0.6982682712063399
     },
     {
@@ -45,8 +45,8 @@
       "n_sink": 4,
       "max_cache_size": 2052,
       "perplexity": 35.686309814453125,
-      "runtime_sec": 5.87319855496753,
-      "prefill_sec": 0.005937179084867239,
+      "runtime_sec": 6.3306690900353715,
+      "prefill_sec": 0.005905437981709838,
       "compression_ratio": 0.3977105958321103
     },
     {
@@ -54,8 +54,8 @@
       "n_sink": 4,
       "max_cache_size": 4100,
       "perplexity": 41.381832122802734,
-      "runtime_sec": 0.0057015749625861645,
-      "prefill_sec": 0.005697841988876462,
+      "runtime_sec": 0.012942221015691757,
+      "prefill_sec": 0.012920539011247456,
       "compression_ratio": 0.0
     }
   ]

@@ -19,18 +19,18 @@
   "baseline_source": "loaded:results/streaming_llm/pg19_baseline.json",
   "baseline": {
     "perplexity": 57.45960235595703,
-    "runtime_sec": 23.408290732069872,
-    "prefill_sec": 0.350935056922026
+    "runtime_sec": 21.916492628050037,
+    "prefill_sec": 0.34578244597651064
   },
   "streaming": {
     "perplexity": 57.994022369384766,
-    "runtime_sec": 15.283131531905383,
-    "prefill_sec": 0.28586286900099367
+    "runtime_sec": 15.024628986953758,
+    "prefill_sec": 0.2739724980201572
   },
   "metrics": {
     "compression_ratio": 0.7490234375,
     "peak_memory_mb": 356.240234375,
-    "speedup": 1.5316423000876644,
+    "speedup": 1.4587044144038863,
     "ppl_increase_percent": 0.930079554183217
   }
 }

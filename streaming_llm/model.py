@@ -15,6 +15,7 @@ from torch import nn
 from transformers.cache_utils import Cache
 
 from .kv_cache import StreamingKVCache
+from .mit_cache import StartRecentKVCache
 from .rope_utils import rerotate_keys
 
 
@@ -52,6 +53,7 @@ class StreamingLLMWrapper:
             window_size=window_size,
         )
         self.cache_name = type(self.cache).__name__
+        self._use_start_recent = isinstance(self.cache, StartRecentKVCache)
 
         self._enabled = False
         self._positions: Optional[torch.Tensor] = None  # [batch, seq_len]
@@ -117,12 +119,24 @@ class StreamingLLMWrapper:
         ).unsqueeze(0)
         new_positions = new_positions.expand(batch_size, -1)
 
+        slice_info = None
+        if self._use_start_recent:
+            slice_info = self.cache.get_slice_info(seq_len)
         for layer_idx, layer in enumerate(past_key_values.layers):
             key_states = layer.keys
             value_states = layer.values
 
-            compressed_key = torch.index_select(key_states, 2, indices).contiguous()
-            compressed_value = torch.index_select(value_states, 2, indices).contiguous()
+            if self._use_start_recent and slice_info is not None:
+                sink_count, recent_start, total_len = slice_info
+                compressed_key = self._slice_cache_tensor(
+                    key_states, sink_count, recent_start, total_len
+                )
+                compressed_value = self._slice_cache_tensor(
+                    value_states, sink_count, recent_start, total_len
+                )
+            else:
+                compressed_key = torch.index_select(key_states, 2, indices).contiguous()
+                compressed_value = torch.index_select(value_states, 2, indices).contiguous()
 
             layer_info = self._layer_infos[min(layer_idx, len(self._layer_infos) - 1)]
             compressed_key = rerotate_keys(
@@ -138,6 +152,28 @@ class StreamingLLMWrapper:
 
         self._positions = new_positions
 
+    def _slice_cache_tensor(
+        self,
+        tensor: torch.Tensor,
+        sink_count: int,
+        recent_start: int,
+        seq_len: int,
+    ) -> torch.Tensor:
+        """
+        Slice sink and recent regions (MIT-style) without gather.
+        """
+        parts = []
+        if sink_count > 0:
+            parts.append(tensor[:, :, :sink_count, :])
+        if recent_start < seq_len:
+            parts.append(tensor[:, :, recent_start:seq_len, :])
+        if not parts:
+            return tensor.new_empty(
+                tensor.shape[0], tensor.shape[1], 0, tensor.shape[-1]
+            )
+        if len(parts) == 1:
+            return parts[0].contiguous()
+        return torch.cat(parts, dim=2).contiguous()
     # ---------------------------------------------------------------------
     # Helpers
     # ---------------------------------------------------------------------

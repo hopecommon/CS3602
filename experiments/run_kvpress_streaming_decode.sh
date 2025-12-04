@@ -1,18 +1,31 @@
 #!/bin/bash
 set -euo pipefail
 
-# Set offline Hugging Face cache (matches other scripts)
-export HF_HOME="/data2/jflin/CS3602/.cache/huggingface"
-export HF_DATASETS_CACHE="$HF_HOME/datasets"
-export HF_HUB_OFFLINE=1
-export TRANSFORMERS_OFFLINE=1
+# 读取 .env, 提供可共享配置
+ENV_FILE=".env"
+if [ -f "$ENV_FILE" ]; then
+  set -o allexport
+  source "$ENV_FILE"
+  set +o allexport
+fi
 
-PYTHON="kvpress/.venv/bin/python"
+# Set offline Hugging Face cache (matches other scripts)
+export HF_HOME="${HF_HOME:-/data2/jflin/CS3602/.cache/huggingface}"
+export HF_DATASETS_CACHE="${HF_DATASETS_CACHE:-$HF_HOME/datasets}"
+export HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}"
+export TRANSFORMERS_OFFLINE="${TRANSFORMERS_OFFLINE:-1}"
+
+PYTHON="${PYTHON_BIN:-kvpress/.venv/bin/python}"
 
 if [ ! -f "$PYTHON" ]; then
   echo "Python interpreter not found: $PYTHON"
   exit 1
 fi
+
+DATASET_NAME=${DATASET_NAME:-wikitext}
+DATASET_CONFIG=${DATASET_CONFIG:-wikitext-103-v1}
+SPLIT=${SPLIT:-test}
+TEXT_COLUMN=${TEXT_COLUMN:-text}
 
 SCRIPT=$(cat <<'PY'
 import importlib.util
@@ -33,10 +46,11 @@ from torch.nn import functional as F
 from kvpress import StreamingLLMPress, KeyRerotationPress
 
 MODEL_NAME = "EleutherAI/pythia-70m"
-DATASET = "wikitext"
-CONFIG = "wikitext-103-v1"
-SPLIT = "test"
-TEXT_COLUMN = "text"
+import os
+DATASET = os.environ.get("DATASET_NAME", "wikitext")
+CONFIG = os.environ.get("DATASET_CONFIG", "")
+SPLIT = os.environ.get("SPLIT", "test")
+TEXT_COLUMN = os.environ.get("TEXT_COLUMN", "text")
 MAX_SAMPLES = 64
 MAX_EVAL_TOKENS = 4096
 N_SINK = 4

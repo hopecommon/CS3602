@@ -1,0 +1,13 @@
+WikiText-103 Baseline|SUCCESS|23s
+PG19 Baseline|SUCCESS|29s
+WikiText-103 StreamingLLM|SUCCESS|16s
+WikiText-103 MIT StreamingLLM|SUCCESS|16s
+PG19 StreamingLLM|SUCCESS|21s
+PG19 MIT StreamingLLM|SUCCESS|20s
+WikiText-103 kvpress StreamingLLM (decode-loop)|SUCCESS|14s
+WikiText-103 kvpress StreamingLLM (official eval)|SUCCESS|7s
+PG19 kvpress StreamingLLM (decode-loop)|SUCCESS|17s
+PG19 kvpress StreamingLLM (official eval)|SUCCESS|6s
+Window Size 消融实验|SUCCESS|65s
+N_sink 消融实验|SUCCESS|70s
+生成可视化图表|SUCCESS|4s

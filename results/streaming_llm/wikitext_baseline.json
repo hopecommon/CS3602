@@ -16,8 +16,8 @@
   },
   "baseline": {
     "perplexity": 36.30228805541992,
-    "runtime_sec": 17.187583726015873,
-    "prefill_sec": 0.3584309050347656
+    "runtime_sec": 17.54459418798797,
+    "prefill_sec": 0.3902663900516927
   },
   "baseline_source": "computed",
   "device": "cuda",

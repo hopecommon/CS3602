@@ -1,0 +1,34 @@
+{
+  "model": "EleutherAI/pythia-70m",
+  "dataset": "pg19:",
+  "split": "test",
+  "max_length": 1028,
+  "stride": 512,
+  "max_samples": 64,
+  "max_eval_tokens": 4096,
+  "total_tokens": 4096,
+  "streaming_llm": {
+    "n_sink": 4,
+    "window_size": 1024,
+    "max_cache_size": 1028,
+    "compression_ratio": 0.0
+  },
+  "baseline": {
+    "perplexity": 58.04340362548828,
+    "runtime_sec": 0.319407416973263,
+    "prefill_sec": 0.31940631405450404
+  },
+  "kvpress": {
+    "perplexity": 58.04340362548828,
+    "runtime_sec": 0.04624193802010268,
+    "prefill_sec": 0.04624223604332656
+  },
+  "metrics": {
+    "speedup": 6.907310347468733,
+    "compression_ratio": 0.0,
+    "ppl_increase_percent": 0.0,
+    "peak_memory_mb": 766.12890625
+  },
+  "device": "cuda",
+  "dtype": "torch.float16"
+}

@@ -1,0 +1,8 @@
+{
+  "method": "kvpress",
+  "dataset": "pg19:",
+  "perplexity": 69.51077270507812,
+  "total_time": 12.766429114039056,
+  "prefill_time": 0.3600212769815698,
+  "mode": "kvpress"
+}

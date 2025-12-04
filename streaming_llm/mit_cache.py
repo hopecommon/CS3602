@@ -42,6 +42,16 @@ class StartRecentKVCache:
         self.k_seq_dim = k_seq_dim
         self.v_seq_dim = v_seq_dim
 
+    def get_slice_info(self, seq_len: int) -> tuple[int, int, int]:
+        """
+        Return slicing info for cache pruning: (sink_count, recent_start, seq_len)
+        """
+        sink_count = min(self.start_size, seq_len)
+        window_count = min(self.recent_size, max(seq_len - sink_count, 0))
+        recent_start = seq_len - window_count
+        recent_start = max(recent_start, sink_count)
+        return sink_count, recent_start, seq_len
+
     def get_keep_indices(self, seq_len: int, device: torch.device) -> Optional[Tensor]:
         """
         Return sink + recent keep indices (MIT style). Returns None when the cache
@@ -71,5 +81,4 @@ class StartRecentKVCache:
         if original_seq_len <= self.cache_size:
             return 0.0
         return 1.0 - (self.cache_size / original_seq_len)
-
 

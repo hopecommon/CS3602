@@ -1,0 +1,8 @@
+{
+  "method": "ours",
+  "dataset": "pg19:",
+  "perplexity": 57.994022369384766,
+  "total_time": 13.75175127608236,
+  "prefill_time": 0.2791728079319,
+  "mode": "ours"
+}

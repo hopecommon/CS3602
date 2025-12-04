@@ -1,0 +1,8 @@
+{
+  "method": "baseline",
+  "dataset": "pg19:",
+  "perplexity": 57.684879302978516,
+  "total_time": 23.787692118086852,
+  "prefill_time": 0.3505125659285113,
+  "mode": "baseline"
+}

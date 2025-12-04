@@ -15,16 +15,16 @@
   },
   "baseline": {
     "perplexity": 35.978946685791016,
-    "runtime_sec": 0.31091415300033987,
-    "prefill_sec": 0.31091406603809446
+    "runtime_sec": 0.7335783890448511,
+    "prefill_sec": 0.7335836990969256
   },
   "kvpress": {
     "perplexity": 35.978946685791016,
-    "runtime_sec": 0.07665621908381581,
-    "prefill_sec": 0.07665676297619939
+    "runtime_sec": 0.23544482595752925,
+    "prefill_sec": 0.2354454630985856
   },
   "metrics": {
-    "speedup": 4.055954712042173,
+    "speedup": 3.115712507427017,
     "compression_ratio": 0.498046875,
     "ppl_increase_percent": 0.0,
     "peak_memory_mb": 1377.2529296875

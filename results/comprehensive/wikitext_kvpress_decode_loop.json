@@ -1,0 +1,8 @@
+{
+  "method": "kvpress",
+  "dataset": "wikitext:wikitext-103-v1",
+  "perplexity": 39.140411376953125,
+  "total_time": 10.037331825937144,
+  "prefill_time": 0.33398729702457786,
+  "mode": "kvpress"
+}

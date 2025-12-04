@@ -21,11 +21,19 @@
 
 set +e  # 允许单个实验失败而不中断整个流程
 
+# 读取 .env 文件, 方便自定义参数
+ENV_FILE=".env"
+if [ -f "$ENV_FILE" ]; then
+    set -o allexport
+    source "$ENV_FILE"
+    set +o allexport
+fi
+
 # 离线缓存设置 (确保 Hugging Face 在本地工作)
-export HF_HOME="/data2/jflin/CS3602/.cache/huggingface"
-export HF_DATASETS_CACHE="$HF_HOME/datasets"
-export HF_HUB_OFFLINE=1
-export TRANSFORMERS_OFFLINE=1
+export HF_HOME="${HF_HOME:-/data2/jflin/CS3602/.cache/huggingface}"
+export HF_DATASETS_CACHE="${HF_DATASETS_CACHE:-$HF_HOME/datasets}"
+export HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}"
+export TRANSFORMERS_OFFLINE="${TRANSFORMERS_OFFLINE:-1}"
 mkdir -p "$HF_HOME" "$HF_DATASETS_CACHE"
 
 # 颜色定义
@@ -36,7 +44,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Python 解释器
-PYTHON="kvpress/.venv/bin/python"
+PYTHON="${PYTHON_BIN:-kvpress/.venv/bin/python}"
 
 # 检查 Python 解释器
 if [ ! -f "$PYTHON" ]; then

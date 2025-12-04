@@ -1,0 +1,8 @@
+{
+  "method": "mit",
+  "dataset": "pg19:",
+  "perplexity": 57.994022369384766,
+  "total_time": 14.992580173071474,
+  "prefill_time": 0.27893458399921656,
+  "mode": "mit"
+}

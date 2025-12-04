@@ -1,0 +1,25 @@
+{
+  "model": "EleutherAI/pythia-70m",
+  "dataset": "pg19:",
+  "split": "test",
+  "max_length": 1028,
+  "stride": 512,
+  "max_samples": 64,
+  "max_eval_tokens": 4096,
+  "total_tokens": 4096,
+  "streaming_llm": {
+    "n_sink": 4,
+    "window_size": 1024,
+    "implementation": "ours",
+    "cache_type": "StreamingKVCache",
+    "max_cache_size": 1028
+  },
+  "baseline": {
+    "perplexity": 57.684879302978516,
+    "runtime_sec": 23.81062098906841,
+    "prefill_sec": 0.3487424800405279
+  },
+  "baseline_source": "computed",
+  "device": "cuda",
+  "dtype": "torch.float16"
+}
