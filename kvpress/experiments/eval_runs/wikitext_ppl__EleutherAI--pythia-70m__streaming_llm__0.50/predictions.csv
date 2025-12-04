@@ -1,0 +1,2 @@
+perplexity,press,prefill_runtime_sec,dataset,compression_ratio,runtime_sec,total_runtime_sec
+40.312744140625,streaming_llm,0.08507168001960963,wikitext_ppl,0.5,0.085187096032314,0.085187096032314

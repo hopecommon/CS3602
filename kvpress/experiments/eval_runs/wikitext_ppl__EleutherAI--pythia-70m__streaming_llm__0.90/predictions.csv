@@ -1,0 +1,2 @@
+dataset,perplexity,compression_ratio,runtime_sec
+wikitext_ppl,40.312744140625,0.9,0.3698904199991375
