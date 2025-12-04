@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Optional, Tuple, Dict, Any
 
 import torch
+import torch.nn.functional as F
 from torch import Tensor
 from datasets import load_dataset
 from transformers import AutoTokenizer
@@ -148,6 +149,7 @@ def compute_perplexity(
     stride: int,
     use_streaming: bool = False,
     streaming_wrapper = None,
+    max_cache_size: Optional[int] = None,
 ) -> Tuple[float, float, float]:
     """
     计算 perplexity
@@ -166,6 +168,16 @@ def compute_perplexity(
         total_time: 总时间 (秒)
         prefill_time: prefill 时间 (秒)
     """
+    if max_cache_size is not None:
+        wrapper = streaming_wrapper if use_streaming else None
+        return _compute_streaming_decode_perplexity(
+            model=model,
+            encoded_dataset=encoded_dataset,
+            device=device,
+            max_cache_size=max_cache_size,
+            streaming_wrapper=wrapper,
+        )
+
     nlls = []
     total_tokens = 0
     seq_len = encoded_dataset.size(1)
@@ -208,8 +220,130 @@ def compute_perplexity(
     total_time = time.perf_counter() - total_start
     
     ppl = torch.exp(torch.stack(nlls).sum() / total_tokens)
-    
+
     return ppl.item(), total_time, prefill_time
+
+
+def _compute_streaming_decode_perplexity(
+    model,
+    encoded_dataset: Tensor,
+    device: torch.device,
+    max_cache_size: int,
+    streaming_wrapper = None,
+) -> Tuple[float, float, float]:
+    """
+    使用解码式评估 (逐 token) 计算 PPL 和时间
+
+    Args:
+        model: 语言模型
+        encoded_dataset: tokenized 数据集
+        device: 设备
+        max_cache_size: 最多保留的 token 数 (n_sink + window_size)
+        streaming_wrapper: 若提供则使用 StreamingLLM, 否则模拟 sliding window baseline
+    """
+    seq_len = encoded_dataset.size(1)
+    if seq_len < 2:
+        raise ValueError("Dataset is too short to compute perplexity (seq_len < 2)")
+
+    max_cache_size = max(2, min(max_cache_size, seq_len))
+
+    if torch.cuda.is_available():
+        torch.cuda.reset_peak_memory_stats()
+
+    total_start = time.perf_counter()
+    prefill_start = time.perf_counter()
+
+    total_nll = 0.0
+    total_tokens = 0
+
+    if streaming_wrapper is None:
+        prefill_len = min(max_cache_size, seq_len)
+        input_ids = encoded_dataset[:, :prefill_len].to(device)
+        with torch.no_grad():
+            outputs = model(input_ids=input_ids, use_cache=False)
+
+        logits = outputs.logits[:, :-1, :]
+        labels = input_ids[:, 1:]
+        if labels.numel() > 0:
+            loss = F.cross_entropy(
+                logits.reshape(-1, logits.size(-1)),
+                labels.reshape(-1),
+                reduction="sum",
+            )
+            total_nll += loss.item()
+            total_tokens += labels.numel()
+
+        prefill_time = time.perf_counter() - prefill_start
+
+        for pos in range(prefill_len - 1, seq_len - 1):
+            start_idx = max(0, pos + 1 - max_cache_size)
+            context = encoded_dataset[:, start_idx:pos + 1].to(device)
+            target = encoded_dataset[:, pos + 1].to(device)
+
+            with torch.no_grad():
+                outputs = model(input_ids=context, use_cache=False)
+
+            logits = outputs.logits[:, -1, :]
+            loss = F.cross_entropy(
+                logits,
+                target,
+                reduction="sum",
+            )
+            total_nll += loss.item()
+            total_tokens += target.numel()
+    else:
+        past_key_values = None
+        prefill_len = min(max_cache_size, seq_len)
+        with streaming_wrapper.enable():
+            input_ids = encoded_dataset[:, :prefill_len].to(device)
+            with torch.no_grad():
+                outputs = model(input_ids=input_ids, use_cache=True)
+
+            logits = outputs.logits[:, :-1, :]
+            labels = input_ids[:, 1:]
+            if labels.numel() > 0:
+                loss = F.cross_entropy(
+                    logits.reshape(-1, logits.size(-1)),
+                    labels.reshape(-1),
+                    reduction="sum",
+                )
+                total_nll += loss.item()
+                total_tokens += labels.numel()
+
+            past_key_values = outputs.past_key_values
+            streaming_wrapper.update(past_key_values)
+
+            prefill_time = time.perf_counter() - prefill_start
+
+            for pos in range(prefill_len - 1, seq_len - 1):
+                current_input = encoded_dataset[:, pos:pos + 1].to(device)
+                target = encoded_dataset[:, pos + 1].to(device)
+
+                with torch.no_grad():
+                    outputs = model(
+                        input_ids=current_input,
+                        past_key_values=past_key_values,
+                        use_cache=True,
+                    )
+
+                logits = outputs.logits[:, -1, :]
+                loss = F.cross_entropy(
+                    logits,
+                    target,
+                    reduction="sum",
+                )
+                total_nll += loss.item()
+                total_tokens += target.numel()
+
+                past_key_values = outputs.past_key_values
+                streaming_wrapper.update(past_key_values)
+
+    total_time = time.perf_counter() - total_start
+    ppl = torch.exp(torch.tensor(total_nll / total_tokens))
+    return ppl.item(), total_time, prefill_time
+
+
+_compute_streaming_perplexity = _compute_streaming_decode_perplexity
 
 
 def save_results(

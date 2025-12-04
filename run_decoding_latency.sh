@@ -21,6 +21,13 @@
 
 set +e  # 允许单个实验失败而不中断整个流程
 
+# 离线缓存设置 (确保 Hugging Face 在本地工作)
+export HF_HOME="/data2/jflin/CS3602/.cache/huggingface"
+export HF_DATASETS_CACHE="$HF_HOME/datasets"
+export HF_HUB_OFFLINE=1
+export TRANSFORMERS_OFFLINE=1
+mkdir -p "$HF_HOME" "$HF_DATASETS_CACHE"
+
 # 颜色定义
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -105,52 +112,17 @@ run_experiment() {
 ################################################################################
 
 echo -e "${YELLOW}=== Decoding Latency 实验 ===${NC}" | tee -a "$LOG_FILE"
-echo "测量配置:" | tee -a "$LOG_FILE"
+echo "测量配置 (默认段):" | tee -a "$LOG_FILE"
 echo "  - Prompt Length: 512" | tee -a "$LOG_FILE"
 echo "  - Num Tokens: 2000" | tee -a "$LOG_FILE"
 echo "  - Warmup Tokens: 200" | tee -a "$LOG_FILE"
 echo "  - Num Runs: 3" | tee -a "$LOG_FILE"
 echo "" | tee -a "$LOG_FILE"
 
-# Cache Size 512
-run_experiment \
-    "Decoding Latency (Cache=512)" \
-    "$PYTHON experiments/eval_decoding_latency.py \
-        --cache-size 512 \
-        --n-sink 4 \
-        --prompt-length 512 \
-        --num-tokens 2000 \
-        --warmup-tokens 200 \
-        --num-runs 3 \
-        --output results/decoding/decoding_latency_512.json"
+BASE_DEFAULT="results/decoding/decoding_latency_baseline.json"
 
-# Cache Size 1024
 run_experiment \
-    "Decoding Latency (Cache=1024)" \
-    "$PYTHON experiments/eval_decoding_latency.py \
-        --cache-size 1024 \
-        --n-sink 4 \
-        --prompt-length 512 \
-        --num-tokens 2000 \
-        --warmup-tokens 200 \
-        --num-runs 3 \
-        --output results/decoding/decoding_latency_1024.json"
-
-# Cache Size 2048
-run_experiment \
-    "Decoding Latency (Cache=2048)" \
-    "$PYTHON experiments/eval_decoding_latency.py \
-        --cache-size 2048 \
-        --n-sink 4 \
-        --prompt-length 512 \
-        --num-tokens 2000 \
-        --warmup-tokens 200 \
-        --num-runs 3 \
-        --output results/decoding/decoding_latency_2048.json"
-
-# Cache Size 4096
-run_experiment \
-    "Decoding Latency (Cache=4096)" \
+    "Decoding Latency Baseline (full cache)" \
     "$PYTHON experiments/eval_decoding_latency.py \
         --cache-size 4096 \
         --n-sink 4 \
@@ -158,7 +130,23 @@ run_experiment \
         --num-tokens 2000 \
         --warmup-tokens 200 \
         --num-runs 3 \
-        --output results/decoding/decoding_latency_4096.json"
+        --mode baseline \
+        --output ${BASE_DEFAULT}"
+
+for CACHE in 512 1024 2048 4096; do
+    run_experiment \
+        "Streaming Decoding Latency (Cache=${CACHE})" \
+        "$PYTHON experiments/eval_decoding_latency.py \
+            --cache-size ${CACHE} \
+            --n-sink 4 \
+            --prompt-length 512 \
+            --num-tokens 2000 \
+            --warmup-tokens 200 \
+            --num-runs 3 \
+            --mode streaming \
+            --baseline-results ${BASE_DEFAULT} \
+            --output results/decoding/decoding_latency_${CACHE}.json"
+done
 
 ################################################################################
 # 长序列测试 (可选)
@@ -167,8 +155,22 @@ run_experiment \
 echo -e "${YELLOW}=== 长序列 Decoding Latency 测试 ===${NC}" | tee -a "$LOG_FILE"
 
 # 长序列: 5000 tokens
+BASE_LONG="results/decoding/decoding_latency_baseline_long_5000.json"
+
 run_experiment \
-    "Long Sequence Decoding (5000 tokens, Cache=1024)" \
+    "Long Sequence Baseline (5000 tokens)" \
+    "$PYTHON experiments/eval_decoding_latency.py \
+        --cache-size 4096 \
+        --n-sink 4 \
+        --prompt-length 512 \
+        --num-tokens 5000 \
+        --warmup-tokens 200 \
+        --num-runs 3 \
+        --mode baseline \
+        --output ${BASE_LONG}"
+
+run_experiment \
+    "Long Sequence Streaming (5000 tokens, Cache=1024)" \
     "$PYTHON experiments/eval_decoding_latency.py \
         --cache-size 1024 \
         --n-sink 4 \
@@ -176,6 +178,8 @@ run_experiment \
         --num-tokens 5000 \
         --warmup-tokens 200 \
         --num-runs 3 \
+        --mode streaming \
+        --baseline-results ${BASE_LONG} \
         --output results/decoding/decoding_latency_long_5000.json"
 
 ################################################################################
@@ -186,7 +190,7 @@ echo -e "${YELLOW}=== 不同 n_sink 配置测试 ===${NC}" | tee -a "$LOG_FILE"
 
 # n_sink = 0
 run_experiment \
-    "Decoding Latency (n_sink=0, Cache=1024)" \
+    "Streaming Decoding (n_sink=0, Cache=1024)" \
     "$PYTHON experiments/eval_decoding_latency.py \
         --cache-size 1024 \
         --n-sink 0 \
@@ -194,11 +198,13 @@ run_experiment \
         --num-tokens 2000 \
         --warmup-tokens 200 \
         --num-runs 3 \
+        --mode streaming \
+        --baseline-results ${BASE_DEFAULT} \
         --output results/decoding/decoding_latency_nsink0.json"
 
 # n_sink = 8
 run_experiment \
-    "Decoding Latency (n_sink=8, Cache=1024)" \
+    "Streaming Decoding (n_sink=8, Cache=1024)" \
     "$PYTHON experiments/eval_decoding_latency.py \
         --cache-size 1024 \
         --n-sink 8 \
@@ -206,6 +212,8 @@ run_experiment \
         --num-tokens 2000 \
         --warmup-tokens 200 \
         --num-runs 3 \
+        --mode streaming \
+        --baseline-results ${BASE_DEFAULT} \
         --output results/decoding/decoding_latency_nsink8.json"
 
 ################################################################################

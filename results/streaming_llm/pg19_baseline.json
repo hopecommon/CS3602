@@ -1,33 +1,25 @@
 {
   "model": "EleutherAI/pythia-70m",
-  "dataset": "pg19:wikitext-103-v1",
+  "dataset": "pg19:",
   "split": "test",
-  "max_length": 1024,
-  "stride": 512,
+  "max_length": 2048,
+  "stride": 1024,
   "max_samples": 1,
   "max_eval_tokens": 4096,
   "total_tokens": 4096,
   "streaming_llm": {
     "n_sink": 0,
-    "window_size": 999999,
-    "max_cache_size": 999999
+    "window_size": 1024,
+    "implementation": "ours",
+    "cache_type": "StreamingKVCache",
+    "max_cache_size": 1024
   },
   "baseline": {
-    "perplexity": 57.91722106933594,
-    "runtime_sec": 0.3256916319951415,
-    "prefill_sec": 0.3256900170817971
+    "perplexity": 57.45960235595703,
+    "runtime_sec": 23.408290732069872,
+    "prefill_sec": 0.350935056922026
   },
-  "streaming": {
-    "perplexity": 57.91722106933594,
-    "runtime_sec": 0.03673226595856249,
-    "prefill_sec": 0.03673176106531173
-  },
-  "metrics": {
-    "speedup": 8.866636007769104,
-    "compression_ratio": 0.0,
-    "ppl_increase_percent": 0.0,
-    "peak_memory_mb": 759.7294921875
-  },
+  "baseline_source": "computed",
   "device": "cuda",
   "dtype": "torch.float16"
 }

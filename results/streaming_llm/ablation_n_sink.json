@@ -8,54 +8,54 @@
       "n_sink": 0,
       "window_size": 1024,
       "max_cache_size": 1024,
-      "perplexity": 40.312744140625,
-      "runtime_sec": 0.3371211759513244,
-      "prefill_sec": 0.33712005510460585,
+      "perplexity": 37.17771530151367,
+      "runtime_sec": 12.08469863398932,
+      "prefill_sec": 0.2988964559044689,
       "compression_ratio": 0.6994423246257705
     },
     {
       "n_sink": 1,
       "window_size": 1024,
       "max_cache_size": 1025,
-      "perplexity": 40.312744140625,
-      "runtime_sec": 0.03283859905786812,
-      "prefill_sec": 0.03283797192852944,
+      "perplexity": 36.886417388916016,
+      "runtime_sec": 10.011113951099105,
+      "prefill_sec": 0.005442928057163954,
       "compression_ratio": 0.6991488112709128
     },
     {
       "n_sink": 2,
       "window_size": 1024,
       "max_cache_size": 1026,
-      "perplexity": 40.312744140625,
-      "runtime_sec": 0.03249257896095514,
-      "prefill_sec": 0.03249213902745396,
+      "perplexity": 36.9336051940918,
+      "runtime_sec": 9.989494858076796,
+      "prefill_sec": 0.004522853996604681,
       "compression_ratio": 0.6988552979160552
     },
     {
       "n_sink": 4,
       "window_size": 1024,
       "max_cache_size": 1028,
-      "perplexity": 40.312744140625,
-      "runtime_sec": 0.03320162103045732,
-      "prefill_sec": 0.03320104593876749,
+      "perplexity": 36.790061950683594,
+      "runtime_sec": 11.344798959908076,
+      "prefill_sec": 0.004547892021946609,
       "compression_ratio": 0.6982682712063399
     },
     {
       "n_sink": 8,
       "window_size": 1024,
       "max_cache_size": 1032,
-      "perplexity": 40.312744140625,
-      "runtime_sec": 0.03404278901871294,
-      "prefill_sec": 0.03404233406763524,
+      "perplexity": 36.779815673828125,
+      "runtime_sec": 9.958719698013738,
+      "prefill_sec": 0.004580478998832405,
       "compression_ratio": 0.6970942177869093
     },
     {
       "n_sink": 16,
       "window_size": 1024,
       "max_cache_size": 1040,
-      "perplexity": 40.312744140625,
-      "runtime_sec": 0.03320200392045081,
-      "prefill_sec": 0.0332015739986673,
+      "perplexity": 36.9306526184082,
+      "runtime_sec": 9.940416486933827,
+      "prefill_sec": 0.004581309040077031,
       "compression_ratio": 0.6947461109480482
     }
   ]

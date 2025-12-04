@@ -6,6 +6,7 @@ StreamingLLM 评估脚本
 """
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -15,7 +16,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 # 添加项目根目录到 path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from streaming_llm import StreamingLLMWrapper
+from streaming_llm import StartRecentKVCache, StreamingLLMWrapper
 from eval_utils import (
     load_tokenized_dataset,
     compute_perplexity,
@@ -114,6 +115,25 @@ def parse_args():
         default=1024,
         help="滑动窗口大小"
     )
+    parser.add_argument(
+        "--streaming-mode",
+        type=str,
+        choices=["ours", "mit"],
+        default="ours",
+        help="StreamingLLM implementation to use for the decode loop"
+    )
+    parser.add_argument(
+        "--mode",
+        type=str,
+        choices=["both", "baseline", "streaming"],
+        default="both",
+        help="评估模式: both=基线+Streaming, baseline=仅基线, streaming=仅 Streaming"
+    )
+    parser.add_argument(
+        "--baseline-results",
+        type=Path,
+        help="已存在的基线结果 JSON (mode=streaming 时可复用)"
+    )
     
     # 输出参数
     parser.add_argument(
@@ -128,6 +148,13 @@ def parse_args():
 
 def main():
     args = parse_args()
+    target_cache = args.n_sink + args.window_size
+    if args.max_length < target_cache:
+        print(
+            f"警告: max_length({args.max_length}) < n_sink + window_size ({target_cache}), "
+            f"已自动调整 max_length = {target_cache}"
+        )
+        args.max_length = target_cache
     
     # 设置设备和数据类型
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -151,7 +178,12 @@ def main():
     print(f"数据类型: {torch_dtype}")
     print(f"n_sink: {args.n_sink}")
     print(f"window_size: {args.window_size}")
+    print(f"模式: {args.mode}")
     print(f"{'='*60}\n")
+
+    streaming_cache_name = (
+        "StartRecentKVCache" if args.streaming_mode == "mit" else "StreamingKVCache"
+    )
     
     # 加载 tokenizer
     print("加载 tokenizer...")
@@ -181,59 +213,131 @@ def main():
     ).to(device)
     model.eval()
     
-    # 评估基线
-    print("\n" + "="*60)
-    print("评估基线 (无压缩)")
-    print("="*60)
-    baseline_ppl, baseline_time, baseline_prefill = compute_perplexity(
+    baseline_metrics = None
+    baseline_source = None
+    
+    if args.mode in {"both", "baseline"}:
+        print("\n" + "="*60)
+        print("评估基线 (无压缩)")
+        print("="*60)
+        baseline_ppl, baseline_time, baseline_prefill = compute_perplexity(
         model=model,
         encoded_dataset=encoded_dataset,
         device=device,
         max_length=args.max_length,
         stride=args.stride,
         use_streaming=False,
+        max_cache_size=args.n_sink + args.window_size,
     )
-    print(f"基线 PPL: {baseline_ppl:.2f}")
-    print(f"基线 Runtime: {baseline_time:.3f}s")
-    print(f"基线 Prefill: {baseline_prefill:.3f}s")
+        baseline_metrics = {
+            "perplexity": baseline_ppl,
+            "runtime_sec": baseline_time,
+            "prefill_sec": baseline_prefill,
+        }
+        baseline_source = "computed"
+        print(f"基线 PPL: {baseline_ppl:.2f}")
+        print(f"基线 Runtime: {baseline_time:.3f}s")
+        print(f"基线 Prefill: {baseline_prefill:.3f}s")
+    elif args.mode == "streaming" and args.baseline_results:
+        if not args.baseline_results.exists():
+            raise FileNotFoundError(f"基线结果文件不存在: {args.baseline_results}")
+        print(f"\n加载已有基线结果: {args.baseline_results}")
+        cached = json.loads(args.baseline_results.read_text())
+        baseline_metrics = cached.get("baseline")
+        if baseline_metrics is None:
+            raise ValueError("提供的基线结果文件不包含 baseline 字段")
+        baseline_source = f"loaded:{args.baseline_results}"
+    else:
+        print("\nStreaming 模式未提供基线, 将重新计算基线以便对比")
+        baseline_ppl, baseline_time, baseline_prefill = compute_perplexity(
+            model=model,
+            encoded_dataset=encoded_dataset,
+            device=device,
+            max_length=args.max_length,
+            stride=args.stride,
+        use_streaming=False,
+        max_cache_size=args.n_sink + args.window_size,
+        )
+        baseline_metrics = {
+            "perplexity": baseline_ppl,
+            "runtime_sec": baseline_time,
+            "prefill_sec": baseline_prefill,
+        }
+        baseline_source = "computed"
     
-    # 评估 StreamingLLM
-    print("\n" + "="*60)
-    print("评估 StreamingLLM (我们的实现)")
-    print("="*60)
+    if args.mode == "baseline":
+        results = {
+            "model": args.model_name,
+            "dataset": f"{args.dataset_name}:{args.dataset_config}",
+            "split": args.split,
+            "max_length": args.max_length,
+            "stride": args.stride,
+            "max_samples": args.max_samples,
+            "max_eval_tokens": args.max_eval_tokens,
+            "total_tokens": encoded_dataset.shape[1],
+            "streaming_llm": {
+                "n_sink": args.n_sink,
+                "window_size": args.window_size,
+                "implementation": args.streaming_mode,
+                "cache_type": streaming_cache_name,
+                "max_cache_size": target_cache,
+            },
+            "baseline": baseline_metrics,
+            "baseline_source": baseline_source,
+            "device": str(device),
+            "dtype": str(torch_dtype),
+        }
+        print_results(results)
+        save_results(results, args.output)
+        return
     
-    streaming_wrapper = StreamingLLMWrapper(
-        model=model,
-        n_sink=args.n_sink,
-        window_size=args.window_size
-    )
+    streaming_metrics = None
+    compression_ratio = None
+    peak_memory_mb = 0
     
-    streaming_ppl, streaming_time, streaming_prefill = compute_perplexity(
-        model=model,
-        encoded_dataset=encoded_dataset,
-        device=device,
-        max_length=args.max_length,
-        stride=args.stride,
+    if args.mode in {"both", "streaming"}:
+        print("\n" + "="*60)
+        print("评估 StreamingLLM (我们的实现)")
+        print("="*60)
+        cache_impl = None
+        if args.streaming_mode == "mit":
+            cache_impl = StartRecentKVCache(
+                start_size=args.n_sink,
+                recent_size=args.window_size,
+                k_seq_dim=2,
+                v_seq_dim=2,
+            )
+        streaming_wrapper = StreamingLLMWrapper(
+            model=model,
+            n_sink=args.n_sink,
+            window_size=args.window_size,
+            cache=cache_impl
+        )
+        streaming_cache_name = streaming_wrapper.cache_name
+        streaming_ppl, streaming_time, streaming_prefill = compute_perplexity(
+            model=model,
+            encoded_dataset=encoded_dataset,
+            device=device,
+            max_length=args.max_length,
+            stride=args.stride,
         use_streaming=True,
         streaming_wrapper=streaming_wrapper,
+        max_cache_size=args.n_sink + args.window_size,
     )
-    print(f"StreamingLLM PPL: {streaming_ppl:.2f}")
-    print(f"StreamingLLM Runtime: {streaming_time:.3f}s")
-    print(f"StreamingLLM Prefill: {streaming_prefill:.3f}s")
+        streaming_metrics = {
+            "perplexity": streaming_ppl,
+            "runtime_sec": streaming_time,
+            "prefill_sec": streaming_prefill,
+        }
+        compression_ratio = streaming_wrapper.get_compression_ratio(
+            encoded_dataset.shape[1]
+        )
+        if torch.cuda.is_available():
+            peak_memory_mb = torch.cuda.max_memory_allocated() / 1024 / 1024
+        print(f"StreamingLLM PPL: {streaming_ppl:.2f}")
+        print(f"StreamingLLM Runtime: {streaming_time:.3f}s")
+        print(f"StreamingLLM Prefill: {streaming_prefill:.3f}s")
     
-    # 计算加速比和压缩比
-    speedup = baseline_time / streaming_time if streaming_time > 0 else 0
-    compression_ratio = streaming_wrapper.get_compression_ratio(
-        encoded_dataset.shape[1]
-    )
-    ppl_increase = ((streaming_ppl - baseline_ppl) / baseline_ppl) * 100
-    
-    # 显存使用
-    peak_memory_mb = 0
-    if torch.cuda.is_available():
-        peak_memory_mb = torch.cuda.max_memory_allocated() / 1024 / 1024
-    
-    # 汇总结果
     results = {
         "model": args.model_name,
         "dataset": f"{args.dataset_name}:{args.dataset_config}",
@@ -246,40 +350,48 @@ def main():
         "streaming_llm": {
             "n_sink": args.n_sink,
             "window_size": args.window_size,
-            "max_cache_size": args.n_sink + args.window_size,
-        },
-        "baseline": {
-            "perplexity": baseline_ppl,
-            "runtime_sec": baseline_time,
-            "prefill_sec": baseline_prefill,
-        },
-        "streaming": {
-            "perplexity": streaming_ppl,
-            "runtime_sec": streaming_time,
-            "prefill_sec": streaming_prefill,
-        },
-        "metrics": {
-            "speedup": speedup,
-            "compression_ratio": compression_ratio,
-            "ppl_increase_percent": ppl_increase,
-            "peak_memory_mb": peak_memory_mb,
+            "implementation": args.streaming_mode,
+            "cache_type": streaming_cache_name,
+            "max_cache_size": target_cache,
         },
         "device": str(device),
         "dtype": str(torch_dtype),
+        "baseline_source": baseline_source,
     }
     
-    # 打印和保存结果
+    if baseline_metrics:
+        results["baseline"] = baseline_metrics
+    if streaming_metrics:
+        results["streaming"] = streaming_metrics
+    
+    metrics_block = {}
+    if streaming_metrics:
+        metrics_block["compression_ratio"] = compression_ratio
+        metrics_block["peak_memory_mb"] = peak_memory_mb
+        if baseline_metrics and streaming_metrics["runtime_sec"] > 0:
+            metrics_block["speedup"] = (
+                baseline_metrics["runtime_sec"] / streaming_metrics["runtime_sec"]
+            )
+        if baseline_metrics:
+            metrics_block["ppl_increase_percent"] = (
+                (streaming_metrics["perplexity"] - baseline_metrics["perplexity"])
+                / baseline_metrics["perplexity"]
+            ) * 100
+    if metrics_block:
+        results["metrics"] = metrics_block
+    
     print_results(results)
     save_results(results, args.output)
     
-    print(f"\n{'='*60}")
-    print(f"总结")
-    print(f"{'='*60}")
-    print(f"加速比: {speedup:.2f}x")
-    print(f"压缩比: {compression_ratio:.2%}")
-    print(f"PPL 增加: {ppl_increase:.2f}%")
-    print(f"峰值显存: {peak_memory_mb:.1f} MB")
-    print(f"{'='*60}\n")
+    if streaming_metrics and "speedup" in metrics_block:
+        print(f"\n{'='*60}")
+        print(f"总结")
+        print(f"{'='*60}")
+        print(f"加速比: {metrics_block['speedup']:.2f}x")
+        print(f"压缩比: {compression_ratio:.2%}")
+        print(f"PPL 增加: {metrics_block.get('ppl_increase_percent', 0):.2f}%")
+        print(f"峰值显存: {peak_memory_mb:.1f} MB")
+        print(f"{'='*60}\n")
 
 
 if __name__ == "__main__":

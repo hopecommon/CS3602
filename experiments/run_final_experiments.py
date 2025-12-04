@@ -150,6 +150,7 @@ class ExperimentRunner:
         max_eval_tokens: int,
         max_length: int = 1024,
         stride: int = 512,
+        max_cache_size: Optional[int] = None,
     ) -> Tuple[float, float, float]:
         """运行基线实验"""
         encoded_dataset = self.load_dataset(
@@ -163,6 +164,7 @@ class ExperimentRunner:
             max_length=max_length,
             stride=stride,
             use_streaming=False,
+            max_cache_size=max_cache_size,
         )
         
         return ppl, runtime, prefill
@@ -197,6 +199,7 @@ class ExperimentRunner:
             stride=stride,
             use_streaming=True,
             streaming_wrapper=wrapper,
+            max_cache_size=wrapper.cache.max_size,
         )
         
         compression_ratio = wrapper.get_compression_ratio(encoded_dataset.shape[1])
@@ -246,6 +249,7 @@ class ExperimentRunner:
                     dataset_config=exp["dataset_config"],
                     max_samples=exp["max_samples"],
                     max_eval_tokens=exp["max_eval_tokens"],
+                    max_cache_size=4 + 1024,
                 )
                 self.log(f"  基线 PPL: {baseline_ppl:.2f}, Runtime: {baseline_time:.3f}s")
                 
@@ -276,7 +280,7 @@ class ExperimentRunner:
                     "streaming_llm": {
                         "n_sink": 4,
                         "window_size": 1024,
-                        "max_cache_size": 1028,
+                        "max_cache_size": 4 + 1024,
                     },
                     "baseline": {
                         "perplexity": baseline_ppl,

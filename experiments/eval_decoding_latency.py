@@ -10,6 +10,7 @@ Per-Token Decoding Latency 评估脚本
 """
 
 import argparse
+import json
 import sys
 import time
 from pathlib import Path
@@ -82,6 +83,18 @@ def parse_args():
         default=3,
         help="重复运行次数"
     )
+    parser.add_argument(
+        "--mode",
+        type=str,
+        choices=["both", "baseline", "streaming"],
+        default="both",
+        help="评估模式: both=基线+Streaming, baseline=仅基线, streaming=仅 Streaming"
+    )
+    parser.add_argument(
+        "--baseline-results",
+        type=Path,
+        help="已存在的基线结果 JSON (mode=streaming 时可复用)"
+    )
     
     # 输出参数
     parser.add_argument(
@@ -147,6 +160,9 @@ def warmup_model(
                 next_token = outputs.logits[:, -1:].argmax(dim=-1)
                 current_ids = next_token
                 past_key_values = outputs.past_key_values
+                
+                if use_streaming and streaming_wrapper is not None:
+                    streaming_wrapper.update(past_key_values)
     
     # 清空 CUDA cache
     if torch.cuda.is_available():
@@ -218,6 +234,9 @@ def measure_decoding_latency(
                 next_token = outputs.logits[:, -1:].argmax(dim=-1)
                 current_ids = next_token
                 past_key_values = outputs.past_key_values
+                
+                if use_streaming and streaming_wrapper is not None:
+                    streaming_wrapper.update(past_key_values)
     
     # 获取峰值显存
     peak_memory_mb = 0
@@ -427,6 +446,7 @@ def main():
     print(f"Num Tokens: {args.num_tokens}")
     print(f"Warmup Tokens: {args.warmup_tokens}")
     print(f"Num Runs: {args.num_runs}")
+    print(f"Mode: {args.mode}")
     print(f"{'='*60}\n")
     
     # 加载 tokenizer
@@ -443,40 +463,64 @@ def main():
     ).to(device)
     model.eval()
     
-    # 评估 Baseline
-    baseline_results = evaluate_baseline(
-        model=model,
-        tokenizer=tokenizer,
-        device=device,
-        args=args,
-    )
+    baseline_results = None
+    baseline_source = None
     
-    # 评估 StreamingLLM
-    streaming_results = evaluate_streaming_llm(
-        model=model,
-        tokenizer=tokenizer,
-        device=device,
-        args=args,
-    )
-    
-    # 计算加速比 - 添加除零保护
-    if streaming_results["mean_latency_ms"] > 0:
-        speedup = baseline_results["mean_latency_ms"] / streaming_results["mean_latency_ms"]
+    if args.mode in {"both", "baseline"}:
+        baseline_results = evaluate_baseline(
+            model=model,
+            tokenizer=tokenizer,
+            device=device,
+            args=args,
+        )
+        baseline_source = "computed"
+    elif args.baseline_results:
+        if not args.baseline_results.exists():
+            raise FileNotFoundError(f"基线结果文件不存在: {args.baseline_results}")
+        cache_data = json.loads(args.baseline_results.read_text())
+        baseline_results = cache_data.get("baseline")
+        if baseline_results is None:
+            raise ValueError("提供的基线结果文件不包含 baseline 数据")
+        baseline_source = f"loaded:{args.baseline_results}"
     else:
-        print("警告: StreamingLLM 延迟为 0,无法计算加速比")
-        speedup = 0.0
+        raise ValueError("Streaming 模式需要提供 --baseline-results")
     
-    if baseline_results["mean_memory_mb"] > 0:
-        memory_reduction = (baseline_results["mean_memory_mb"] - streaming_results["mean_memory_mb"]) / baseline_results["mean_memory_mb"]
-    else:
-        print("警告: Baseline 显存为 0,无法计算显存减少比例")
-        memory_reduction = 0.0
+    streaming_results = None
+    comparison = None
     
-    # 汇总结果
+    if args.mode in {"both", "streaming"}:
+        streaming_results = evaluate_streaming_llm(
+            model=model,
+            tokenizer=tokenizer,
+            device=device,
+            args=args,
+        )
+        
+        if streaming_results["mean_latency_ms"] > 0:
+            speedup = baseline_results["mean_latency_ms"] / streaming_results["mean_latency_ms"]
+        else:
+            print("警告: StreamingLLM 延迟为 0,无法计算加速比")
+            speedup = 0.0
+        
+        if baseline_results["mean_memory_mb"] > 0:
+            memory_reduction = (
+                baseline_results["mean_memory_mb"] - streaming_results["mean_memory_mb"]
+            ) / baseline_results["mean_memory_mb"]
+        else:
+            print("警告: Baseline 显存在 0,无法计算显存减少比例")
+            memory_reduction = 0.0
+        
+        comparison = {
+            "speedup": speedup,
+            "memory_reduction_percent": memory_reduction * 100,
+        }
+    
     results = {
         "model": args.model_name,
         "device": str(device),
         "dtype": str(torch_dtype),
+        "mode": args.mode,
+        "baseline_source": baseline_source,
         "config": {
             "cache_size": args.cache_size,
             "n_sink": args.n_sink,
@@ -485,26 +529,39 @@ def main():
             "warmup_tokens": args.warmup_tokens,
             "num_runs": args.num_runs,
         },
-        "baseline": baseline_results,
-        "streaming_llm": streaming_results,
-        "comparison": {
-            "speedup": speedup,
-            "memory_reduction_percent": memory_reduction * 100,
-        }
     }
+    if baseline_results:
+        results["baseline"] = baseline_results
+    if streaming_results:
+        results["streaming_llm"] = streaming_results
+    if comparison:
+        results["comparison"] = comparison
     
-    # 打印总结
-    print(f"\n{'='*60}")
-    print(f"最终对比")
-    print(f"{'='*60}")
-    print(f"Baseline:      {baseline_results['mean_latency_ms']:.3f} ± {baseline_results['std_latency_ms']:.3f} ms/token")
-    print(f"StreamingLLM:  {streaming_results['mean_latency_ms']:.3f} ± {streaming_results['std_latency_ms']:.3f} ms/token")
-    print(f"加速比:        {speedup:.2f}x")
-    print(f"显存减少:      {memory_reduction*100:.1f}%")
-    print(f"{'='*60}\n")
+    if streaming_results and comparison:
+        print(f"\n{'='*60}")
+        print(f"最终对比")
+        print(f"{'='*60}")
+        print(
+            f"Baseline:      {baseline_results['mean_latency_ms']:.3f} ± "
+            f"{baseline_results['std_latency_ms']:.3f} ms/token"
+        )
+        print(
+            f"StreamingLLM:  {streaming_results['mean_latency_ms']:.3f} ± "
+            f"{streaming_results['std_latency_ms']:.3f} ms/token"
+        )
+        print(f"加速比:        {comparison['speedup']:.2f}x")
+        print(f"显存减少:      {comparison['memory_reduction_percent']:.1f}%")
+        print(f"{'='*60}\n")
+    elif baseline_results and args.mode == "baseline":
+        print(f"\n{'='*60}")
+        print("基线评估完成")
+        print(f"{'='*60}")
+        print(
+            f"Baseline: {baseline_results['mean_latency_ms']:.3f} ± "
+            f"{baseline_results['std_latency_ms']:.3f} ms/token"
+        )
+        print(f"{'='*60}\n")
     
-    # 保存结果
-    import json
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(results, indent=2))
     print(f"结果已保存到: {args.output}")

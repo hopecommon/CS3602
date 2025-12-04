@@ -1,197 +1,217 @@
 """
-StreamingLLMWrapper: 模型包装器
+StreamingLLMWrapper: KV cache 管理器
 
-使用 Hook 机制将 StreamingLLM 注入到 HuggingFace 模型中
+负责在 HuggingFace 模型上实现 StreamingLLM 的压缩逻辑,并在压缩后重新
+计算 RoPE 位置编码。
 """
 
-from typing import List, Optional
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, List, Optional
+
 import torch
 from torch import nn
+from transformers.cache_utils import Cache
 
 from .kv_cache import StreamingKVCache
+from .rope_utils import rerotate_keys
+
+
+@dataclass
+class LayerInfo:
+    """记录 attention 层的 RoPE 配置"""
+
+    rotary_ndims: Optional[int]
+    inv_freq: Optional[torch.Tensor]
 
 
 class StreamingLLMWrapper:
     """
-    包装 HuggingFace 模型,注入 StreamingLLM 逻辑
-    
-    使用 forward hook 机制在 attention 层后拦截和压缩 KV cache
-    
-    Example:
-        >>> from transformers import AutoModelForCausalLM
-        >>> model = AutoModelForCausalLM.from_pretrained("EleutherAI/pythia-70m")
+    包装 HuggingFace 模型,提供 StreamingLLM 所需的 KV cache 压缩功能
+
+    使用方式:
         >>> wrapper = StreamingLLMWrapper(model, n_sink=4, window_size=1024)
-        >>> 
-        >>> # 使用 context manager
         >>> with wrapper.enable():
-        >>>     outputs = model(input_ids, use_cache=True)
-    
-    Attributes:
-        model: HuggingFace 模型
-        cache: StreamingKVCache 实例
-        hooks: 注册的 hook 列表
-        n_sink: sink token 数量
-        window_size: 滑动窗口大小
+        ...     outputs = model(...)
+        ...     wrapper.update(outputs.past_key_values)
     """
-    
+
     def __init__(
         self,
         model: nn.Module,
         n_sink: int = 4,
-        window_size: int = 1024
+        window_size: int = 1024,
+        cache: Optional[Any] = None,
     ):
-        """
-        初始化 StreamingLLMWrapper
-        
-        Args:
-            model: HuggingFace 模型 (如 GPTNeoXForCausalLM)
-            n_sink: sink token 数量 (默认 4)
-            window_size: 滑动窗口大小 (默认 1024)
-        """
         self.model = model
         self.n_sink = n_sink
         self.window_size = window_size
-        self.cache = StreamingKVCache(n_sink=n_sink, window_size=window_size)
-        self.hooks: List = []
+        self.cache = cache if cache is not None else StreamingKVCache(
+            n_sink=n_sink,
+            window_size=window_size,
+        )
+        self.cache_name = type(self.cache).__name__
+
         self._enabled = False
-    
-    def _create_hook(self):
-        """
-        创建 forward hook 函数
-        
-        Hook 会在 attention 层的 forward 后被调用,
-        拦截 (key, value) 并进行压缩
-        
-        Returns:
-            hook 函数
-        """
-        def hook(module: nn.Module, input, output):
-            """
-            Forward hook 函数
-            
-            Args:
-                module: attention 模块
-                input: forward 的输入
-                output: forward 的输出
-            
-            Returns:
-                修改后的 output (压缩 KV cache)
-            """
-            # GPTNeoX attention 输出格式:
-            # output = (attn_output, present_key_value, attn_weights)
-            # present_key_value = (key, value) 或 None
-            
-            if not isinstance(output, tuple) or len(output) < 2:
-                return output
-            
-            attn_output = output[0]
-            present_kv = output[1]
-            
-            # 如果没有 KV cache,直接返回
-            if present_kv is None or not isinstance(present_kv, tuple):
-                return output
-            
-            # 提取 key 和 value
-            key, value = present_kv
-            
-            # 压缩 KV cache
-            compressed_key, compressed_value = self.cache.compress(key, value)
-            
-            # 构造新的 output
-            new_output = (attn_output, (compressed_key, compressed_value))
-            
-            # 如果有 attention weights,也要保留
-            if len(output) > 2:
-                new_output = new_output + output[2:]
-            
-            return new_output
-        
-        return hook
-    
-    def _register_hooks(self):
-        """
-        注册 hooks 到所有 attention 层
-        
-        支持 GPTNeoX (Pythia) 架构
-        """
-        # 检测模型架构
-        if hasattr(self.model, 'gpt_neox'):
-            # GPTNeoX / Pythia
-            layers = self.model.gpt_neox.layers
-        elif hasattr(self.model, 'transformer'):
-            # GPT-2 / GPT-J
-            layers = self.model.transformer.h
-        elif hasattr(self.model, 'model') and hasattr(self.model.model, 'layers'):
-            # LLaMA / Mistral
-            layers = self.model.model.layers
-        else:
-            raise ValueError(
-                f"Unsupported model architecture. "
-                f"Model type: {type(self.model).__name__}"
-            )
-        
-        # 注册 hook 到每个 attention 层
-        for layer_idx, layer in enumerate(layers):
-            # 获取 attention 模块
-            if hasattr(layer, 'attention'):
-                attention_module = layer.attention
-            elif hasattr(layer, 'attn'):
-                attention_module = layer.attn
-            elif hasattr(layer, 'self_attn'):
-                attention_module = layer.self_attn
-            else:
-                raise ValueError(
-                    f"Cannot find attention module in layer {layer_idx}. "
-                    f"Layer type: {type(layer).__name__}"
-                )
-            
-            # 注册 hook
-            hook_handle = attention_module.register_forward_hook(
-                self._create_hook()
-            )
-            self.hooks.append(hook_handle)
-    
-    def _remove_hooks(self):
-        """移除所有注册的 hooks"""
-        for hook in self.hooks:
-            hook.remove()
-        self.hooks.clear()
-    
+        self._positions: Optional[torch.Tensor] = None  # [batch, seq_len]
+        self._layer_infos = self._collect_layer_infos()
+
+    # ---------------------------------------------------------------------
+    # Context manager helpers
+    # ---------------------------------------------------------------------
     def enable(self):
-        """
-        启用 StreamingLLM (返回 context manager)
-        
-        Returns:
-            self (用于 context manager)
-        """
+        """启用 wrapper (context manager)"""
         return self
-    
+
     def __enter__(self):
-        """Context manager 入口"""
-        if not self._enabled:
-            self._register_hooks()
-            self._enabled = True
+        self.reset()
+        self._enabled = True
         return self
-    
+
     def __exit__(self, exc_type, exc_val, exc_tb):
-        """Context manager 出口"""
-        if self._enabled:
-            self._remove_hooks()
-            self._enabled = False
+        self.reset()
+        self._enabled = False
         return False
-    
+
+    def reset(self):
+        """重置内部状态"""
+        self._positions = None
+
+    # ---------------------------------------------------------------------
+    # Core logic
+    # ---------------------------------------------------------------------
+    def update(self, past_key_values: Cache | None):
+        """
+        对当前的 past_key_values 执行 StreamingLLM 压缩,并重新计算 RoPE。
+        """
+        if not self._enabled or past_key_values is None:
+            return
+
+        if not isinstance(past_key_values, Cache):
+            raise TypeError(
+                "StreamingLLMWrapper 仅支持新的 Cache API, "
+                "请使用 transformers>=4.36 的模型"
+            )
+
+        if len(past_key_values.layers) == 0:
+            return
+
+        first_layer = past_key_values.layers[0]
+        if first_layer.keys.numel() == 0:
+            return
+
+        device = first_layer.keys.device
+        batch_size = first_layer.keys.shape[0]
+        seq_len = first_layer.keys.shape[2]
+
+        self._ensure_position_buffer(batch_size, seq_len, device)
+
+        indices = self.cache.get_keep_indices(seq_len, device)
+        if indices is None:
+            return
+
+        old_positions = torch.index_select(self._positions, 1, indices)
+        new_positions = torch.arange(
+            indices.shape[0], device=device, dtype=old_positions.dtype
+        ).unsqueeze(0)
+        new_positions = new_positions.expand(batch_size, -1)
+
+        for layer_idx, layer in enumerate(past_key_values.layers):
+            key_states = layer.keys
+            value_states = layer.values
+
+            compressed_key = torch.index_select(key_states, 2, indices).contiguous()
+            compressed_value = torch.index_select(value_states, 2, indices).contiguous()
+
+            layer_info = self._layer_infos[min(layer_idx, len(self._layer_infos) - 1)]
+            compressed_key = rerotate_keys(
+                compressed_key,
+                old_positions,
+                new_positions,
+                inv_freq=layer_info.inv_freq,
+                rotary_dim=layer_info.rotary_ndims,
+            )
+
+            layer.keys = compressed_key
+            layer.values = compressed_value
+
+        self._positions = new_positions
+
+    # ---------------------------------------------------------------------
+    # Helpers
+    # ---------------------------------------------------------------------
+    def _ensure_position_buffer(self, batch_size: int, seq_len: int, device: torch.device):
+        """
+        初始化/扩展 position buffer,追踪 cache 内每个 token 的相对位置
+        """
+        if self._positions is None or self._positions.shape[0] != batch_size:
+            self._positions = torch.arange(
+                seq_len, device=device, dtype=torch.long
+            ).unsqueeze(0).expand(batch_size, -1).clone()
+            return
+
+        current_len = self._positions.shape[1]
+        if seq_len > current_len:
+            extra = torch.arange(
+                current_len,
+                seq_len,
+                device=device,
+                dtype=torch.long,
+            ).unsqueeze(0)
+            extra = extra.expand(batch_size, -1).clone()
+            self._positions = torch.cat([self._positions, extra], dim=1)
+        elif seq_len < current_len:
+            self._positions = self._positions[:, :seq_len]
+
+    def _collect_layer_infos(self) -> List[LayerInfo]:
+        """
+        收集每一层 attention 的 RoPE 配置
+        当前主要支持 GPTNeoX (Pythia) 和 LLaMA 系列
+        """
+        infos: List[LayerInfo] = []
+
+        if hasattr(self.model, "gpt_neox"):
+            layers = self.model.gpt_neox.layers
+            inv_freq = getattr(self.model.gpt_neox, "rotary_emb", None)
+            inv_freq = getattr(inv_freq, "inv_freq", None)
+            for layer in layers:
+                attn = layer.attention
+                infos.append(
+                    LayerInfo(
+                        rotary_ndims=getattr(attn, "rotary_ndims", None),
+                        inv_freq=inv_freq,
+                    )
+                )
+            return infos
+
+        if hasattr(self.model, "model") and hasattr(self.model.model, "layers"):
+            layers = self.model.model.layers
+            for layer in layers:
+                attn = getattr(layer, "self_attn", None)
+                rotary_emb = getattr(attn, "rotary_emb", None) if attn else None
+                infos.append(
+                    LayerInfo(
+                        rotary_ndims=getattr(attn, "rotary_ndims", None),
+                        inv_freq=getattr(rotary_emb, "inv_freq", None),
+                    )
+                )
+            return infos
+
+        if hasattr(self.model, "transformer") and hasattr(self.model.transformer, "h"):
+            # GPT-2 / GPT-J 等无 RoPE 的模型,仅执行裁剪
+            for _ in self.model.transformer.h:
+                infos.append(LayerInfo(rotary_ndims=None, inv_freq=None))
+            return infos
+
+        raise ValueError(f"Unsupported model architecture: {type(self.model).__name__}")
+
+    # ---------------------------------------------------------------------
+    # Misc
+    # ---------------------------------------------------------------------
     def get_compression_ratio(self, seq_len: int) -> float:
-        """
-        获取给定序列长度的压缩比
-        
-        Args:
-            seq_len: 序列长度
-        
-        Returns:
-            compression_ratio: 压缩比 (0-1)
-        """
         return self.cache.get_compression_ratio(seq_len)
-    
+
     def __repr__(self) -> str:
         return (
             f"StreamingLLMWrapper(\n"

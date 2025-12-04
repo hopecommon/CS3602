@@ -11,7 +11,8 @@ https://arxiv.org/abs/2309.17453
 """
 
 from .kv_cache import StreamingKVCache
+from .mit_cache import StartRecentKVCache
 from .model import StreamingLLMWrapper
 
 __version__ = "0.1.0"
-__all__ = ["StreamingKVCache", "StreamingLLMWrapper"]
+__all__ = ["StreamingKVCache", "StartRecentKVCache", "StreamingLLMWrapper"]

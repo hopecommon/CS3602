@@ -1,10 +1,10 @@
 ################################################################################
 # Decoding Latency 实验
-# 开始时间: Thu Dec  4 05:26:19 PM CST 2025
+# 开始时间: Thu Dec  4 07:42:03 PM CST 2025
 ################################################################################
 
 [1;33m=== Decoding Latency 实验 ===[0m
-测量配置:
+测量配置 (默认段):
   - Prompt Length: 512
   - Num Tokens: 2000
   - Warmup Tokens: 200
@@ -12,10 +12,77 @@
 
 
 [0;34m========================================[0m
-[0;34m实验 1: Decoding Latency (Cache=512)[0m
+[0;34m实验 1: Decoding Latency Baseline (full cache)[0m
 [0;34m========================================[0m
-命令: kvpress/.venv/bin/python experiments/eval_decoding_latency.py         --cache-size 512         --n-sink 4         --prompt-length 512         --num-tokens 2000         --warmup-tokens 200         --num-runs 3         --output results/decoding/decoding_latency_512.json
-开始时间: Thu Dec  4 05:26:19 PM CST 2025
+命令: kvpress/.venv/bin/python experiments/eval_decoding_latency.py         --cache-size 4096         --n-sink 4         --prompt-length 512         --num-tokens 2000         --warmup-tokens 200         --num-runs 3         --mode baseline         --output results/decoding/decoding_latency_baseline.json
+开始时间: Thu Dec  4 07:42:03 PM CST 2025
+`torch_dtype` is deprecated! Use `dtype` instead!
+
+============================================================
+Per-Token Decoding Latency 评估
+============================================================
+模型: EleutherAI/pythia-70m
+设备: cuda
+数据类型: torch.float16
+Cache Size: 4096
+Prompt Length: 512
+Num Tokens: 2000
+Warmup Tokens: 200
+Num Runs: 3
+Mode: baseline
+============================================================
+
+加载 tokenizer...
+加载模型...
+
+============================================================
+评估 Baseline (Full KV Cache)
+============================================================
+
+Run 1/3
+  Warmup: 生成 200 tokens...
+  Warmup 完成
+  测量: 生成 2000 tokens...
+  收集到 2000 个延迟测量
+  平均延迟: 3.768 ms/token
+  峰值显存: 201.7 MB
+
+Run 2/3
+  Warmup: 生成 200 tokens...
+  Warmup 完成
+  测量: 生成 2000 tokens...
+  收集到 2000 个延迟测量
+  平均延迟: 3.008 ms/token
+  峰值显存: 201.7 MB
+
+Run 3/3
+  Warmup: 生成 200 tokens...
+  Warmup 完成
+  测量: 生成 2000 tokens...
+  收集到 2000 个延迟测量
+  平均延迟: 3.017 ms/token
+  峰值显存: 201.7 MB
+
+总结 (3 runs):
+  平均延迟: 3.264 ± 1.901 ms/token
+  中位数延迟: 3.007 ms/token
+  平均显存: 201.7 MB
+
+============================================================
+基线评估完成
+============================================================
+Baseline: 3.264 ± 1.901 ms/token
+============================================================
+
+结果已保存到: results/decoding/decoding_latency_baseline.json
+[0;32m✓ 成功[0m (耗时: 27s)
+
+
+[0;34m========================================[0m
+[0;34m实验 2: Streaming Decoding Latency (Cache=512)[0m
+[0;34m========================================[0m
+命令: kvpress/.venv/bin/python experiments/eval_decoding_latency.py             --cache-size 512             --n-sink 4             --prompt-length 512             --num-tokens 2000             --warmup-tokens 200             --num-runs 3             --mode streaming             --baseline-results results/decoding/decoding_latency_baseline.json             --output results/decoding/decoding_latency_512.json
+开始时间: Thu Dec  4 07:42:30 PM CST 2025
 `torch_dtype` is deprecated! Use `dtype` instead!
 
 ============================================================
@@ -29,43 +96,11 @@ Prompt Length: 512
 Num Tokens: 2000
 Warmup Tokens: 200
 Num Runs: 3
+Mode: streaming
 ============================================================
 
 加载 tokenizer...
 加载模型...
-
-============================================================
-评估 Baseline (Full KV Cache)
-============================================================
-
-Run 1/3
-  Warmup: 生成 200 tokens...
-  Warmup 完成
-  测量: 生成 2000 tokens...
-  收集到 2000 个延迟测量
-  平均延迟: 3.054 ms/token
-  峰值显存: 201.7 MB
-
-Run 2/3
-  Warmup: 生成 200 tokens...
-  Warmup 完成
-  测量: 生成 2000 tokens...
-  收集到 2000 个延迟测量
-  平均延迟: 3.558 ms/token
-  峰值显存: 201.7 MB
-
-Run 3/3
-  Warmup: 生成 200 tokens...
-  Warmup 完成
-  测量: 生成 2000 tokens...
-  收集到 2000 个延迟测量
-  平均延迟: 3.048 ms/token
-  峰值显存: 201.7 MB
-
-总结 (3 runs):
-  平均延迟: 3.220 ± 1.251 ms/token
-  中位数延迟: 3.036 ms/token
-  平均显存: 201.7 MB
 
 ============================================================
 评估 StreamingLLM (我们的实现)
@@ -78,7 +113,7 @@ Run 1/3
   Warmup 完成
   测量: 生成 2000 tokens...
   收集到 2000 个延迟测量
-  平均延迟: 3.071 ms/token
+  平均延迟: 3.371 ms/token
   峰值显存: 201.7 MB
 
 Run 2/3
@@ -86,7 +121,7 @@ Run 2/3
   Warmup 完成
   测量: 生成 2000 tokens...
   收集到 2000 个延迟测量
-  平均延迟: 3.077 ms/token
+  平均延迟: 2.987 ms/token
   峰值显存: 201.7 MB
 
 Run 3/3
@@ -94,32 +129,32 @@ Run 3/3
   Warmup 完成
   测量: 生成 2000 tokens...
   收集到 2000 个延迟测量
-  平均延迟: 3.730 ms/token
+  平均延迟: 2.997 ms/token
   峰值显存: 201.7 MB
 
 总结 (3 runs):
-  平均延迟: 3.293 ± 1.481 ms/token
-  中位数延迟: 3.065 ms/token
+  平均延迟: 3.119 ± 1.035 ms/token
+  中位数延迟: 2.989 ms/token
   平均显存: 201.7 MB
 
 ============================================================
 最终对比
 ============================================================
-Baseline:      3.220 ± 1.251 ms/token
-StreamingLLM:  3.293 ± 1.481 ms/token
-加速比:        0.98x
-显存减少:      0.0%
+Baseline:      3.264 ± 1.901 ms/token
+StreamingLLM:  3.119 ± 1.035 ms/token
+加速比:        1.05x
+显存减少:      -0.0%
 ============================================================
 
 结果已保存到: results/decoding/decoding_latency_512.json
-[0;32m✓ 成功[0m (耗时: 51s)
+[0;32m✓ 成功[0m (耗时: 35s)
 
 
 [0;34m========================================[0m
-[0;34m实验 2: Decoding Latency (Cache=1024)[0m
+[0;34m实验 3: Streaming Decoding Latency (Cache=1024)[0m
 [0;34m========================================[0m
-命令: kvpress/.venv/bin/python experiments/eval_decoding_latency.py         --cache-size 1024         --n-sink 4         --prompt-length 512         --num-tokens 2000         --warmup-tokens 200         --num-runs 3         --output results/decoding/decoding_latency_1024.json
-开始时间: Thu Dec  4 05:27:10 PM CST 2025
+命令: kvpress/.venv/bin/python experiments/eval_decoding_latency.py             --cache-size 1024             --n-sink 4             --prompt-length 512             --num-tokens 2000             --warmup-tokens 200             --num-runs 3             --mode streaming             --baseline-results results/decoding/decoding_latency_baseline.json             --output results/decoding/decoding_latency_1024.json
+开始时间: Thu Dec  4 07:43:05 PM CST 2025
 `torch_dtype` is deprecated! Use `dtype` instead!
 
 ============================================================
@@ -133,14 +168,161 @@ Prompt Length: 512
 Num Tokens: 2000
 Warmup Tokens: 200
 Num Runs: 3
+Mode: streaming
 ============================================================
 
 加载 tokenizer...
 加载模型...
 
 ============================================================
-评估 Baseline (Full KV Cache)
+评估 StreamingLLM (我们的实现)
 ============================================================
+  n_sink: 4
+  window_size: 1024
+
+Run 1/3
+  Warmup: 生成 200 tokens...
+  Warmup 完成
+  测量: 生成 2000 tokens...
+  收集到 2000 个延迟测量
+  平均延迟: 3.037 ms/token
+  峰值显存: 201.7 MB
+
+Run 2/3
+  Warmup: 生成 200 tokens...
+  Warmup 完成
+  测量: 生成 2000 tokens...
+  收集到 2000 个延迟测量
+  平均延迟: 2.999 ms/token
+  峰值显存: 201.7 MB
+
+Run 3/3
+  Warmup: 生成 200 tokens...
+  Warmup 完成
+  测量: 生成 2000 tokens...
+  收集到 2000 个延迟测量
+  平均延迟: 2.990 ms/token
+  峰值显存: 201.7 MB
+
+总结 (3 runs):
+  平均延迟: 3.009 ± 0.091 ms/token
+  中位数延迟: 2.998 ms/token
+  平均显存: 201.7 MB
+
+============================================================
+最终对比
+============================================================
+Baseline:      3.264 ± 1.901 ms/token
+StreamingLLM:  3.009 ± 0.091 ms/token
+加速比:        1.08x
+显存减少:      -0.0%
+============================================================
+
+结果已保存到: results/decoding/decoding_latency_1024.json
+[0;32m✓ 成功[0m (耗时: 32s)
+
+
+[0;34m========================================[0m
+[0;34m实验 4: Streaming Decoding Latency (Cache=2048)[0m
+[0;34m========================================[0m
+命令: kvpress/.venv/bin/python experiments/eval_decoding_latency.py             --cache-size 2048             --n-sink 4             --prompt-length 512             --num-tokens 2000             --warmup-tokens 200             --num-runs 3             --mode streaming             --baseline-results results/decoding/decoding_latency_baseline.json             --output results/decoding/decoding_latency_2048.json
+开始时间: Thu Dec  4 07:43:37 PM CST 2025
+`torch_dtype` is deprecated! Use `dtype` instead!
+
+============================================================
+Per-Token Decoding Latency 评估
+============================================================
+模型: EleutherAI/pythia-70m
+设备: cuda
+数据类型: torch.float16
+Cache Size: 2048
+Prompt Length: 512
+Num Tokens: 2000
+Warmup Tokens: 200
+Num Runs: 3
+Mode: streaming
+============================================================
+
+加载 tokenizer...
+加载模型...
+
+============================================================
+评估 StreamingLLM (我们的实现)
+============================================================
+  n_sink: 4
+  window_size: 2048
+
+Run 1/3
+  Warmup: 生成 200 tokens...
+  Warmup 完成
+  测量: 生成 2000 tokens...
+  收集到 2000 个延迟测量
+  平均延迟: 3.009 ms/token
+  峰值显存: 201.7 MB
+
+Run 2/3
+  Warmup: 生成 200 tokens...
+  Warmup 完成
+  测量: 生成 2000 tokens...
+  收集到 2000 个延迟测量
+  平均延迟: 2.995 ms/token
+  峰值显存: 201.7 MB
+
+Run 3/3
+  Warmup: 生成 200 tokens...
+  Warmup 完成
+  测量: 生成 2000 tokens...
+  收集到 2000 个延迟测量
+  平均延迟: 2.994 ms/token
+  峰值显存: 201.7 MB
+
+总结 (3 runs):
+  平均延迟: 3.000 ± 0.075 ms/token
+  中位数延迟: 2.992 ms/token
+  平均显存: 201.7 MB
+
+============================================================
+最终对比
+============================================================
+Baseline:      3.264 ± 1.901 ms/token
+StreamingLLM:  3.000 ± 0.075 ms/token
+加速比:        1.09x
+显存减少:      -0.0%
+============================================================
+
+结果已保存到: results/decoding/decoding_latency_2048.json
+[0;32m✓ 成功[0m (耗时: 28s)
+
+
+[0;34m========================================[0m
+[0;34m实验 5: Streaming Decoding Latency (Cache=4096)[0m
+[0;34m========================================[0m
+命令: kvpress/.venv/bin/python experiments/eval_decoding_latency.py             --cache-size 4096             --n-sink 4             --prompt-length 512             --num-tokens 2000             --warmup-tokens 200             --num-runs 3             --mode streaming             --baseline-results results/decoding/decoding_latency_baseline.json             --output results/decoding/decoding_latency_4096.json
+开始时间: Thu Dec  4 07:44:05 PM CST 2025
+`torch_dtype` is deprecated! Use `dtype` instead!
+
+============================================================
+Per-Token Decoding Latency 评估
+============================================================
+模型: EleutherAI/pythia-70m
+设备: cuda
+数据类型: torch.float16
+Cache Size: 4096
+Prompt Length: 512
+Num Tokens: 2000
+Warmup Tokens: 200
+Num Runs: 3
+Mode: streaming
+============================================================
+
+加载 tokenizer...
+加载模型...
+
+============================================================
+评估 StreamingLLM (我们的实现)
+============================================================
+  n_sink: 4
+  window_size: 4096
 
 Run 1/3
   Warmup: 生成 200 tokens...
@@ -155,7 +337,7 @@ Run 2/3
   Warmup 完成
   测量: 生成 2000 tokens...
   收集到 2000 个延迟测量
-  平均延迟: 2.985 ms/token
+  平均延迟: 2.990 ms/token
   峰值显存: 201.7 MB
 
 Run 3/3
@@ -163,171 +345,33 @@ Run 3/3
   Warmup 完成
   测量: 生成 2000 tokens...
   收集到 2000 个延迟测量
-  平均延迟: 2.988 ms/token
+  平均延迟: 3.160 ms/token
   峰值显存: 201.7 MB
 
 总结 (3 runs):
-  平均延迟: 2.991 ± 0.075 ms/token
-  中位数延迟: 2.985 ms/token
-  平均显存: 201.7 MB
-
-============================================================
-评估 StreamingLLM (我们的实现)
-============================================================
-  n_sink: 4
-  window_size: 1024
-
-Run 1/3
-  Warmup: 生成 200 tokens...
-  Warmup 完成
-  测量: 生成 2000 tokens...
-  收集到 2000 个延迟测量
-  平均延迟: 3.756 ms/token
-  峰值显存: 201.7 MB
-
-Run 2/3
-  Warmup: 生成 200 tokens...
-  Warmup 完成
-  测量: 生成 2000 tokens...
-  收集到 2000 个延迟测量
-  平均延迟: 3.030 ms/token
-  峰值显存: 201.7 MB
-
-Run 3/3
-  Warmup: 生成 200 tokens...
-  Warmup 完成
-  测量: 生成 2000 tokens...
-  收集到 2000 个延迟测量
-  平均延迟: 2.970 ms/token
-  峰值显存: 201.7 MB
-
-总结 (3 runs):
-  平均延迟: 3.252 ± 1.567 ms/token
-  中位数延迟: 3.010 ms/token
+  平均延迟: 3.050 ± 4.025 ms/token
+  中位数延迟: 2.984 ms/token
   平均显存: 201.7 MB
 
 ============================================================
 最终对比
 ============================================================
-Baseline:      2.991 ± 0.075 ms/token
-StreamingLLM:  3.252 ± 1.567 ms/token
-加速比:        0.92x
-显存减少:      0.0%
+Baseline:      3.264 ± 1.901 ms/token
+StreamingLLM:  3.050 ± 4.025 ms/token
+加速比:        1.07x
+显存减少:      -0.0%
 ============================================================
 
-结果已保存到: results/decoding/decoding_latency_1024.json
-[0;32m✓ 成功[0m (耗时: 50s)
+结果已保存到: results/decoding/decoding_latency_4096.json
+[0;32m✓ 成功[0m (耗时: 28s)
 
+[1;33m=== 长序列 Decoding Latency 测试 ===[0m
 
 [0;34m========================================[0m
-[0;34m实验 3: Decoding Latency (Cache=2048)[0m
+[0;34m实验 6: Long Sequence Baseline (5000 tokens)[0m
 [0;34m========================================[0m
-命令: kvpress/.venv/bin/python experiments/eval_decoding_latency.py         --cache-size 2048         --n-sink 4         --prompt-length 512         --num-tokens 2000         --warmup-tokens 200         --num-runs 3         --output results/decoding/decoding_latency_2048.json
-开始时间: Thu Dec  4 05:28:00 PM CST 2025
-`torch_dtype` is deprecated! Use `dtype` instead!
-
-============================================================
-Per-Token Decoding Latency 评估
-============================================================
-模型: EleutherAI/pythia-70m
-设备: cuda
-数据类型: torch.float16
-Cache Size: 2048
-Prompt Length: 512
-Num Tokens: 2000
-Warmup Tokens: 200
-Num Runs: 3
-============================================================
-
-加载 tokenizer...
-加载模型...
-
-============================================================
-评估 Baseline (Full KV Cache)
-============================================================
-
-Run 1/3
-  Warmup: 生成 200 tokens...
-  Warmup 完成
-  测量: 生成 2000 tokens...
-  收集到 2000 个延迟测量
-  平均延迟: 3.702 ms/token
-  峰值显存: 201.7 MB
-
-Run 2/3
-  Warmup: 生成 200 tokens...
-  Warmup 完成
-  测量: 生成 2000 tokens...
-  收集到 2000 个延迟测量
-  平均延迟: 2.958 ms/token
-  峰值显存: 201.7 MB
-
-Run 3/3
-  Warmup: 生成 200 tokens...
-  Warmup 完成
-  测量: 生成 2000 tokens...
-  收集到 2000 个延迟测量
-  平均延迟: 2.963 ms/token
-  峰值显存: 201.7 MB
-
-总结 (3 runs):
-  平均延迟: 3.207 ± 1.778 ms/token
-  中位数延迟: 2.961 ms/token
-  平均显存: 201.7 MB
-
-============================================================
-评估 StreamingLLM (我们的实现)
-============================================================
-  n_sink: 4
-  window_size: 2048
-
-Run 1/3
-  Warmup: 生成 200 tokens...
-  Warmup 完成
-  测量: 生成 2000 tokens...
-  收集到 2000 个延迟测量
-  平均延迟: 3.021 ms/token
-  峰值显存: 201.7 MB
-
-Run 2/3
-  Warmup: 生成 200 tokens...
-  Warmup 完成
-  测量: 生成 2000 tokens...
-  收集到 2000 个延迟测量
-  平均延迟: 3.337 ms/token
-  峰值显存: 201.7 MB
-
-Run 3/3
-  Warmup: 生成 200 tokens...
-  Warmup 完成
-  测量: 生成 2000 tokens...
-  收集到 2000 个延迟测量
-  平均延迟: 3.018 ms/token
-  峰值显存: 201.7 MB
-
-总结 (3 runs):
-  平均延迟: 3.125 ± 1.106 ms/token
-  中位数延迟: 3.012 ms/token
-  平均显存: 201.7 MB
-
-============================================================
-最终对比
-============================================================
-Baseline:      3.207 ± 1.778 ms/token
-StreamingLLM:  3.125 ± 1.106 ms/token
-加速比:        1.03x
-显存减少:      0.0%
-============================================================
-
-结果已保存到: results/decoding/decoding_latency_2048.json
-[0;32m✓ 成功[0m (耗时: 50s)
-
-
-[0;34m========================================[0m
-[0;34m实验 4: Decoding Latency (Cache=4096)[0m
-[0;34m========================================[0m
-命令: kvpress/.venv/bin/python experiments/eval_decoding_latency.py         --cache-size 4096         --n-sink 4         --prompt-length 512         --num-tokens 2000         --warmup-tokens 200         --num-runs 3         --output results/decoding/decoding_latency_4096.json
-开始时间: Thu Dec  4 05:28:50 PM CST 2025
+命令: kvpress/.venv/bin/python experiments/eval_decoding_latency.py         --cache-size 4096         --n-sink 4         --prompt-length 512         --num-tokens 5000         --warmup-tokens 200         --num-runs 3         --mode baseline         --output results/decoding/decoding_latency_baseline_long_5000.json
+开始时间: Thu Dec  4 07:44:33 PM CST 2025
 `torch_dtype` is deprecated! Use `dtype` instead!
 
 ============================================================
@@ -338,9 +382,10 @@ Per-Token Decoding Latency 评估
 数据类型: torch.float16
 Cache Size: 4096
 Prompt Length: 512
-Num Tokens: 2000
+Num Tokens: 5000
 Warmup Tokens: 200
 Num Runs: 3
+Mode: baseline
 ============================================================
 
 加载 tokenizer...
@@ -353,86 +398,47 @@ Num Runs: 3
 Run 1/3
   Warmup: 生成 200 tokens...
   Warmup 完成
-  测量: 生成 2000 tokens...
-  收集到 2000 个延迟测量
-  平均延迟: 2.936 ms/token
-  峰值显存: 201.7 MB
+  测量: 生成 5000 tokens...
+  收集到 5000 个延迟测量
+  平均延迟: 3.298 ms/token
+  峰值显存: 215.3 MB
 
 Run 2/3
   Warmup: 生成 200 tokens...
   Warmup 完成
-  测量: 生成 2000 tokens...
-  收集到 2000 个延迟测量
-  平均延迟: 2.925 ms/token
-  峰值显存: 201.7 MB
+  测量: 生成 5000 tokens...
+  收集到 5000 个延迟测量
+  平均延迟: 3.264 ms/token
+  峰值显存: 215.3 MB
 
 Run 3/3
   Warmup: 生成 200 tokens...
   Warmup 完成
-  测量: 生成 2000 tokens...
-  收集到 2000 个延迟测量
-  平均延迟: 3.158 ms/token
-  峰值显存: 201.7 MB
+  测量: 生成 5000 tokens...
+  收集到 5000 个延迟测量
+  平均延迟: 3.032 ms/token
+  峰值显存: 215.3 MB
 
 总结 (3 runs):
-  平均延迟: 3.007 ± 0.879 ms/token
-  中位数延迟: 2.924 ms/token
-  平均显存: 201.7 MB
+  平均延迟: 3.198 ± 1.323 ms/token
+  中位数延迟: 3.022 ms/token
+  平均显存: 215.3 MB
 
 ============================================================
-评估 StreamingLLM (我们的实现)
+基线评估完成
 ============================================================
-  n_sink: 4
-  window_size: 4096
-
-Run 1/3
-  Warmup: 生成 200 tokens...
-  Warmup 完成
-  测量: 生成 2000 tokens...
-  收集到 2000 个延迟测量
-  平均延迟: 2.963 ms/token
-  峰值显存: 201.7 MB
-
-Run 2/3
-  Warmup: 生成 200 tokens...
-  Warmup 完成
-  测量: 生成 2000 tokens...
-  收集到 2000 个延迟测量
-  平均延迟: 2.973 ms/token
-  峰值显存: 201.7 MB
-
-Run 3/3
-  Warmup: 生成 200 tokens...
-  Warmup 完成
-  测量: 生成 2000 tokens...
-  收集到 2000 个延迟测量
-  平均延迟: 2.958 ms/token
-  峰值显存: 201.7 MB
-
-总结 (3 runs):
-  平均延迟: 2.965 ± 0.054 ms/token
-  中位数延迟: 2.958 ms/token
-  平均显存: 201.7 MB
-
-============================================================
-最终对比
-============================================================
-Baseline:      3.007 ± 0.879 ms/token
-StreamingLLM:  2.965 ± 0.054 ms/token
-加速比:        1.01x
-显存减少:      0.0%
+Baseline: 3.198 ± 1.323 ms/token
 ============================================================
 
-结果已保存到: results/decoding/decoding_latency_4096.json
-[0;32m✓ 成功[0m (耗时: 49s)
+结果已保存到: results/decoding/decoding_latency_baseline_long_5000.json
+[0;32m✓ 成功[0m (耗时: 56s)
 
-[1;33m=== 长序列 Decoding Latency 测试 ===[0m
 
 [0;34m========================================[0m
-[0;34m实验 5: Long Sequence Decoding (5000 tokens, Cache=1024)[0m
+[0;34m实验 7: Long Sequence Streaming (5000 tokens, Cache=1024)[0m
 [0;34m========================================[0m
-命令: kvpress/.venv/bin/python experiments/eval_decoding_latency.py         --cache-size 1024         --n-sink 4         --prompt-length 512         --num-tokens 5000         --warmup-tokens 200         --num-runs 3         --output results/decoding/decoding_latency_long_5000.json
-开始时间: Thu Dec  4 05:29:39 PM CST 2025
+命令: kvpress/.venv/bin/python experiments/eval_decoding_latency.py         --cache-size 1024         --n-sink 4         --prompt-length 512         --num-tokens 5000         --warmup-tokens 200         --num-runs 3         --mode streaming         --baseline-results results/decoding/decoding_latency_baseline_long_5000.json         --output results/decoding/decoding_latency_long_5000.json
+开始时间: Thu Dec  4 07:45:29 PM CST 2025
 `torch_dtype` is deprecated! Use `dtype` instead!
 
 ============================================================
@@ -446,43 +452,11 @@ Prompt Length: 512
 Num Tokens: 5000
 Warmup Tokens: 200
 Num Runs: 3
+Mode: streaming
 ============================================================
 
 加载 tokenizer...
 加载模型...
-
-============================================================
-评估 Baseline (Full KV Cache)
-============================================================
-
-Run 1/3
-  Warmup: 生成 200 tokens...
-  Warmup 完成
-  测量: 生成 5000 tokens...
-  收集到 5000 个延迟测量
-  平均延迟: 3.029 ms/token
-  峰值显存: 215.3 MB
-
-Run 2/3
-  Warmup: 生成 200 tokens...
-  Warmup 完成
-  测量: 生成 5000 tokens...
-  收集到 5000 个延迟测量
-  平均延迟: 3.271 ms/token
-  峰值显存: 215.3 MB
-
-Run 3/3
-  Warmup: 生成 200 tokens...
-  Warmup 完成
-  测量: 生成 5000 tokens...
-  收集到 5000 个延迟测量
-  平均延迟: 3.021 ms/token
-  峰值显存: 215.3 MB
-
-总结 (3 runs):
-  平均延迟: 3.107 ± 0.896 ms/token
-  中位数延迟: 3.017 ms/token
-  平均显存: 215.3 MB
 
 ============================================================
 评估 StreamingLLM (我们的实现)
@@ -495,49 +469,49 @@ Run 1/3
   Warmup 完成
   测量: 生成 5000 tokens...
   收集到 5000 个延迟测量
-  平均延迟: 3.327 ms/token
-  峰值显存: 215.3 MB
+  平均延迟: 3.301 ms/token
+  峰值显存: 201.7 MB
 
 Run 2/3
   Warmup: 生成 200 tokens...
   Warmup 完成
   测量: 生成 5000 tokens...
   收集到 5000 个延迟测量
-  平均延迟: 3.317 ms/token
-  峰值显存: 215.3 MB
+  平均延迟: 3.347 ms/token
+  峰值显存: 201.7 MB
 
 Run 3/3
   Warmup: 生成 200 tokens...
   Warmup 完成
   测量: 生成 5000 tokens...
   收集到 5000 个延迟测量
-  平均延迟: 3.050 ms/token
-  峰值显存: 215.3 MB
+  平均延迟: 3.342 ms/token
+  峰值显存: 201.7 MB
 
 总结 (3 runs):
-  平均延迟: 3.231 ± 1.372 ms/token
-  中位数延迟: 3.048 ms/token
-  平均显存: 215.3 MB
+  平均延迟: 3.330 ± 1.384 ms/token
+  中位数延迟: 3.143 ms/token
+  平均显存: 201.7 MB
 
 ============================================================
 最终对比
 ============================================================
-Baseline:      3.107 ± 0.896 ms/token
-StreamingLLM:  3.231 ± 1.372 ms/token
+Baseline:      3.198 ± 1.323 ms/token
+StreamingLLM:  3.330 ± 1.384 ms/token
 加速比:        0.96x
-显存减少:      0.0%
+显存减少:      6.3%
 ============================================================
 
 结果已保存到: results/decoding/decoding_latency_long_5000.json
-[0;32m✓ 成功[0m (耗时: 109s)
+[0;32m✓ 成功[0m (耗时: 76s)
 
 [1;33m=== 不同 n_sink 配置测试 ===[0m
 
 [0;34m========================================[0m
-[0;34m实验 6: Decoding Latency (n_sink=0, Cache=1024)[0m
+[0;34m实验 8: Streaming Decoding (n_sink=0, Cache=1024)[0m
 [0;34m========================================[0m
-命令: kvpress/.venv/bin/python experiments/eval_decoding_latency.py         --cache-size 1024         --n-sink 0         --prompt-length 512         --num-tokens 2000         --warmup-tokens 200         --num-runs 3         --output results/decoding/decoding_latency_nsink0.json
-开始时间: Thu Dec  4 05:31:28 PM CST 2025
+命令: kvpress/.venv/bin/python experiments/eval_decoding_latency.py         --cache-size 1024         --n-sink 0         --prompt-length 512         --num-tokens 2000         --warmup-tokens 200         --num-runs 3         --mode streaming         --baseline-results results/decoding/decoding_latency_baseline.json         --output results/decoding/decoding_latency_nsink0.json
+开始时间: Thu Dec  4 07:46:45 PM CST 2025
 `torch_dtype` is deprecated! Use `dtype` instead!
 
 ============================================================
@@ -551,43 +525,11 @@ Prompt Length: 512
 Num Tokens: 2000
 Warmup Tokens: 200
 Num Runs: 3
+Mode: streaming
 ============================================================
 
 加载 tokenizer...
 加载模型...
-
-============================================================
-评估 Baseline (Full KV Cache)
-============================================================
-
-Run 1/3
-  Warmup: 生成 200 tokens...
-  Warmup 完成
-  测量: 生成 2000 tokens...
-  收集到 2000 个延迟测量
-  平均延迟: 3.667 ms/token
-  峰值显存: 201.7 MB
-
-Run 2/3
-  Warmup: 生成 200 tokens...
-  Warmup 完成
-  测量: 生成 2000 tokens...
-  收集到 2000 个延迟测量
-  平均延迟: 2.988 ms/token
-  峰值显存: 201.7 MB
-
-Run 3/3
-  Warmup: 生成 200 tokens...
-  Warmup 完成
-  测量: 生成 2000 tokens...
-  收集到 2000 个延迟测量
-  平均延迟: 3.007 ms/token
-  峰值显存: 201.7 MB
-
-总结 (3 runs):
-  平均延迟: 3.221 ± 1.519 ms/token
-  中位数延迟: 2.991 ms/token
-  平均显存: 201.7 MB
 
 ============================================================
 评估 StreamingLLM (我们的实现)
@@ -600,7 +542,7 @@ Run 1/3
   Warmup 完成
   测量: 生成 2000 tokens...
   收集到 2000 个延迟测量
-  平均延迟: 3.051 ms/token
+  平均延迟: 2.972 ms/token
   峰值显存: 201.7 MB
 
 Run 2/3
@@ -608,7 +550,7 @@ Run 2/3
   Warmup 完成
   测量: 生成 2000 tokens...
   收集到 2000 个延迟测量
-  平均延迟: 3.733 ms/token
+  平均延迟: 2.964 ms/token
   峰值显存: 201.7 MB
 
 Run 3/3
@@ -616,32 +558,32 @@ Run 3/3
   Warmup 完成
   测量: 生成 2000 tokens...
   收集到 2000 个延迟测量
-  平均延迟: 3.024 ms/token
+  平均延迟: 3.598 ms/token
   峰值显存: 201.7 MB
 
 总结 (3 runs):
-  平均延迟: 3.269 ± 1.766 ms/token
-  中位数延迟: 3.016 ms/token
+  平均延迟: 3.178 ± 1.383 ms/token
+  中位数延迟: 2.965 ms/token
   平均显存: 201.7 MB
 
 ============================================================
 最终对比
 ============================================================
-Baseline:      3.221 ± 1.519 ms/token
-StreamingLLM:  3.269 ± 1.766 ms/token
-加速比:        0.99x
-显存减少:      0.0%
+Baseline:      3.264 ± 1.901 ms/token
+StreamingLLM:  3.178 ± 1.383 ms/token
+加速比:        1.03x
+显存减少:      -0.0%
 ============================================================
 
 结果已保存到: results/decoding/decoding_latency_nsink0.json
-[0;32m✓ 成功[0m (耗时: 51s)
+[0;32m✓ 成功[0m (耗时: 34s)
 
 
 [0;34m========================================[0m
-[0;34m实验 7: Decoding Latency (n_sink=8, Cache=1024)[0m
+[0;34m实验 9: Streaming Decoding (n_sink=8, Cache=1024)[0m
 [0;34m========================================[0m
-命令: kvpress/.venv/bin/python experiments/eval_decoding_latency.py         --cache-size 1024         --n-sink 8         --prompt-length 512         --num-tokens 2000         --warmup-tokens 200         --num-runs 3         --output results/decoding/decoding_latency_nsink8.json
-开始时间: Thu Dec  4 05:32:19 PM CST 2025
+命令: kvpress/.venv/bin/python experiments/eval_decoding_latency.py         --cache-size 1024         --n-sink 8         --prompt-length 512         --num-tokens 2000         --warmup-tokens 200         --num-runs 3         --mode streaming         --baseline-results results/decoding/decoding_latency_baseline.json         --output results/decoding/decoding_latency_nsink8.json
+开始时间: Thu Dec  4 07:47:19 PM CST 2025
 `torch_dtype` is deprecated! Use `dtype` instead!
 
 ============================================================
@@ -655,43 +597,11 @@ Prompt Length: 512
 Num Tokens: 2000
 Warmup Tokens: 200
 Num Runs: 3
+Mode: streaming
 ============================================================
 
 加载 tokenizer...
 加载模型...
-
-============================================================
-评估 Baseline (Full KV Cache)
-============================================================
-
-Run 1/3
-  Warmup: 生成 200 tokens...
-  Warmup 完成
-  测量: 生成 2000 tokens...
-  收集到 2000 个延迟测量
-  平均延迟: 3.085 ms/token
-  峰值显存: 201.7 MB
-
-Run 2/3
-  Warmup: 生成 200 tokens...
-  Warmup 完成
-  测量: 生成 2000 tokens...
-  收集到 2000 个延迟测量
-  平均延迟: 3.446 ms/token
-  峰值显存: 201.7 MB
-
-Run 3/3
-  Warmup: 生成 200 tokens...
-  Warmup 完成
-  测量: 生成 2000 tokens...
-  收集到 2000 个延迟测量
-  平均延迟: 3.059 ms/token
-  峰值显存: 201.7 MB
-
-总结 (3 runs):
-  平均延迟: 3.197 ± 1.160 ms/token
-  中位数延迟: 3.064 ms/token
-  平均显存: 201.7 MB
 
 ============================================================
 评估 StreamingLLM (我们的实现)
@@ -704,7 +614,7 @@ Run 1/3
   Warmup 完成
   测量: 生成 2000 tokens...
   收集到 2000 个延迟测量
-  平均延迟: 3.114 ms/token
+  平均延迟: 3.004 ms/token
   峰值显存: 201.7 MB
 
 Run 2/3
@@ -712,7 +622,7 @@ Run 2/3
   Warmup 完成
   测量: 生成 2000 tokens...
   收集到 2000 个延迟测量
-  平均延迟: 3.112 ms/token
+  平均延迟: 3.459 ms/token
   峰值显存: 201.7 MB
 
 Run 3/3
@@ -720,60 +630,64 @@ Run 3/3
   Warmup 完成
   测量: 生成 2000 tokens...
   收集到 2000 个延迟测量
-  平均延迟: 3.114 ms/token
+  平均延迟: 3.003 ms/token
   峰值显存: 201.7 MB
 
 总结 (3 runs):
-  平均延迟: 3.113 ± 0.047 ms/token
-  中位数延迟: 3.111 ms/token
+  平均延迟: 3.155 ± 1.205 ms/token
+  中位数延迟: 3.002 ms/token
   平均显存: 201.7 MB
 
 ============================================================
 最终对比
 ============================================================
-Baseline:      3.197 ± 1.160 ms/token
-StreamingLLM:  3.113 ± 0.047 ms/token
+Baseline:      3.264 ± 1.901 ms/token
+StreamingLLM:  3.155 ± 1.205 ms/token
 加速比:        1.03x
-显存减少:      0.0%
+显存减少:      -0.0%
 ============================================================
 
 结果已保存到: results/decoding/decoding_latency_nsink8.json
-[0;32m✓ 成功[0m (耗时: 50s)
+[0;32m✓ 成功[0m (耗时: 33s)
 
 
 ################################################################################
 # Decoding Latency 实验完成报告
 ################################################################################
 
-结束时间: Thu Dec  4 05:33:09 PM CST 2025
-总耗时: 410s (6分钟)
+结束时间: Thu Dec  4 07:47:52 PM CST 2025
+总耗时: 349s (5分钟)
 
 实验统计:
-  总实验数: 7
-  [0;32m成功: 7[0m
+  总实验数: 9
+  [0;32m成功: 9[0m
   [0;31m失败: 0[0m
 
 详细结果:
 ----------------------------------------
-  [0;32m✓[0m Decoding Latency (Cache=512) (51s)
-  [0;32m✓[0m Decoding Latency (Cache=1024) (50s)
-  [0;32m✓[0m Decoding Latency (Cache=2048) (50s)
-  [0;32m✓[0m Decoding Latency (Cache=4096) (49s)
-  [0;32m✓[0m Long Sequence Decoding (5000 tokens, Cache=1024) (109s)
-  [0;32m✓[0m Decoding Latency (n_sink=0, Cache=1024) (51s)
-  [0;32m✓[0m Decoding Latency (n_sink=8, Cache=1024) (50s)
+  [0;32m✓[0m Decoding Latency Baseline (full cache) (27s)
+  [0;32m✓[0m Streaming Decoding Latency (Cache=512) (35s)
+  [0;32m✓[0m Streaming Decoding Latency (Cache=1024) (32s)
+  [0;32m✓[0m Streaming Decoding Latency (Cache=2048) (28s)
+  [0;32m✓[0m Streaming Decoding Latency (Cache=4096) (28s)
+  [0;32m✓[0m Long Sequence Baseline (5000 tokens) (56s)
+  [0;32m✓[0m Long Sequence Streaming (5000 tokens, Cache=1024) (76s)
+  [0;32m✓[0m Streaming Decoding (n_sink=0, Cache=1024) (34s)
+  [0;32m✓[0m Streaming Decoding (n_sink=8, Cache=1024) (33s)
 ----------------------------------------
 
 结果文件:
--rw-rw-r-- 1 jflin jflin 300K Dec  4 17:27 results/decoding/decoding_latency_1024.json
--rw-rw-r-- 1 jflin jflin 300K Dec  4 17:28 results/decoding/decoding_latency_2048.json
--rw-rw-r-- 1 jflin jflin 300K Dec  4 17:29 results/decoding/decoding_latency_4096.json
--rw-rw-r-- 1 jflin jflin 300K Dec  4 17:27 results/decoding/decoding_latency_512.json
--rw-rw-r-- 1 jflin jflin 748K Dec  4 17:31 results/decoding/decoding_latency_long_5000.json
--rw-rw-r-- 1 jflin jflin 300K Dec  4 17:32 results/decoding/decoding_latency_nsink0.json
--rw-rw-r-- 1 jflin jflin 300K Dec  4 17:33 results/decoding/decoding_latency_nsink8.json
+-rw-rw-r-- 1 jflin jflin 300K Dec  4 19:43 results/decoding/decoding_latency_1024.json
+-rw-rw-r-- 1 jflin jflin 300K Dec  4 19:44 results/decoding/decoding_latency_2048.json
+-rw-rw-r-- 1 jflin jflin 300K Dec  4 19:44 results/decoding/decoding_latency_4096.json
+-rw-rw-r-- 1 jflin jflin 300K Dec  4 19:43 results/decoding/decoding_latency_512.json
+-rw-rw-r-- 1 jflin jflin 150K Dec  4 19:42 results/decoding/decoding_latency_baseline.json
+-rw-rw-r-- 1 jflin jflin 375K Dec  4 19:45 results/decoding/decoding_latency_baseline_long_5000.json
+-rw-rw-r-- 1 jflin jflin 748K Dec  4 19:46 results/decoding/decoding_latency_long_5000.json
+-rw-rw-r-- 1 jflin jflin 300K Dec  4 19:47 results/decoding/decoding_latency_nsink0.json
+-rw-rw-r-- 1 jflin jflin 300K Dec  4 19:47 results/decoding/decoding_latency_nsink8.json
 
-日志文件: results/decoding/decoding_latency_log_20251204_172619.txt
-总结文件: results/decoding/decoding_latency_summary_20251204_172619.txt
+日志文件: results/decoding/decoding_latency_log_20251204_194203.txt
+总结文件: results/decoding/decoding_latency_summary_20251204_194203.txt
 
 [0;32m✓ 所有 Decoding Latency 实验成功完成![0m

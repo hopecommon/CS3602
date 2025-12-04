@@ -122,6 +122,7 @@ def run_ablation_window_size(
             stride=stride,
             use_streaming=True,
             streaming_wrapper=wrapper,
+            max_cache_size=wrapper.cache.max_size,
         )
         
         compression_ratio = wrapper.get_compression_ratio(encoded_dataset.shape[1])
@@ -180,6 +181,7 @@ def run_ablation_n_sink(
             stride=stride,
             use_streaming=True,
             streaming_wrapper=wrapper,
+            max_cache_size=wrapper.cache.max_size,
         )
         
         compression_ratio = wrapper.get_compression_ratio(encoded_dataset.shape[1])

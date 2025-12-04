@@ -1,9 +1,9 @@
 {
   "model": "EleutherAI/pythia-70m",
-  "dataset": "pg19:wikitext-103-v1",
+  "dataset": "pg19:",
   "split": "test",
-  "max_length": 1024,
-  "stride": 512,
+  "max_length": 2048,
+  "stride": 1024,
   "max_samples": 1,
   "max_eval_tokens": 4096,
   "total_tokens": 4096,
@@ -11,23 +11,23 @@
     "n_sink": 4,
     "window_size": 1024,
     "max_cache_size": 1028,
-    "compression_ratio": 0.7490234375
+    "compression_ratio": 0.498046875
   },
   "baseline": {
-    "perplexity": 57.91722106933594,
-    "runtime_sec": 0.32510856993030757,
-    "prefill_sec": 0.3251090870471671
+    "perplexity": 57.90441131591797,
+    "runtime_sec": 0.30587604991160333,
+    "prefill_sec": 0.30587555503007025
   },
   "kvpress": {
-    "perplexity": 57.91722106933594,
-    "runtime_sec": 0.08980486402288079,
-    "prefill_sec": 0.08980522502679378
+    "perplexity": 57.90441131591797,
+    "runtime_sec": 0.07748566707596183,
+    "prefill_sec": 0.07748591795098037
   },
   "metrics": {
-    "speedup": 3.620166607540047,
-    "compression_ratio": 0.7490234375,
+    "speedup": 3.9475177985077248,
+    "compression_ratio": 0.498046875,
     "ppl_increase_percent": 0.0,
-    "peak_memory_mb": 759.7294921875
+    "peak_memory_mb": 1378.2529296875
   },
   "device": "cuda",
   "dtype": "torch.float16"

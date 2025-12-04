@@ -21,6 +21,13 @@
 
 set +e  # 允许单个实验失败而不中断整个流程
 
+# 离线缓存设置 (确保 Hugging Face 在本地工作)
+export HF_HOME="/data2/jflin/CS3602/.cache/huggingface"
+export HF_DATASETS_CACHE="$HF_HOME/datasets"
+export HF_HUB_OFFLINE=1
+export TRANSFORMERS_OFFLINE=1
+mkdir -p "$HF_HOME" "$HF_DATASETS_CACHE"
+
 # 颜色定义
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -112,7 +119,10 @@ run_experiment \
         --max-samples 64 \
         --max-eval-tokens 4096 \
         --n-sink 0 \
-        --window-size 999999 \
+        --window-size 1024 \
+        --max-length 2048 \
+        --stride 1024 \
+        --mode baseline \
         --output results/streaming_llm/wikitext_baseline.json"
 
 # PG19 Baseline
@@ -120,10 +130,14 @@ run_experiment \
     "PG19 Baseline" \
     "$PYTHON experiments/eval_streaming_llm.py \
         --dataset-name pg19 \
+        --dataset-config \"\" \
         --max-samples 1 \
         --max-eval-tokens 4096 \
         --n-sink 0 \
-        --window-size 999999 \
+        --window-size 1024 \
+        --max-length 2048 \
+        --stride 1024 \
+        --mode baseline \
         --output results/streaming_llm/pg19_baseline.json"
 
 ################################################################################
@@ -142,18 +156,59 @@ run_experiment \
         --max-eval-tokens 4096 \
         --n-sink 4 \
         --window-size 1024 \
+        --max-length 2048 \
+        --stride 1024 \
+        --mode streaming \
+        --baseline-results results/streaming_llm/wikitext_baseline.json \
         --output results/streaming_llm/wikitext_result.json"
+
+run_experiment \
+    "WikiText-103 MIT StreamingLLM" \
+    "$PYTHON experiments/eval_streaming_llm.py \
+        --dataset-name wikitext \
+        --dataset-config wikitext-103-v1 \
+        --max-samples 64 \
+        --max-eval-tokens 4096 \
+        --n-sink 4 \
+        --window-size 1024 \
+        --max-length 2048 \
+        --stride 1024 \
+        --streaming-mode mit \
+        --mode streaming \
+        --baseline-results results/streaming_llm/wikitext_baseline.json \
+        --output results/streaming_llm/wikitext_mit_result.json"
 
 # PG19 StreamingLLM
 run_experiment \
     "PG19 StreamingLLM" \
     "$PYTHON experiments/eval_streaming_llm.py \
         --dataset-name pg19 \
+        --dataset-config \"\" \
         --max-samples 1 \
         --max-eval-tokens 4096 \
         --n-sink 4 \
         --window-size 1024 \
+        --max-length 2048 \
+        --stride 1024 \
+        --mode streaming \
+        --baseline-results results/streaming_llm/pg19_baseline.json \
         --output results/streaming_llm/pg19_result.json"
+
+run_experiment \
+    "PG19 MIT StreamingLLM" \
+    "$PYTHON experiments/eval_streaming_llm.py \
+        --dataset-name pg19 \
+        --dataset-config \"\" \
+        --max-samples 1 \
+        --max-eval-tokens 4096 \
+        --n-sink 4 \
+        --window-size 1024 \
+        --max-length 2048 \
+        --stride 1024 \
+        --streaming-mode mit \
+        --mode streaming \
+        --baseline-results results/streaming_llm/pg19_baseline.json \
+        --output results/streaming_llm/pg19_mit_result.json"
 
 ################################################################################
 # 3. kvpress 官方库对比实验
@@ -171,6 +226,8 @@ run_experiment \
         --max-eval-tokens 4096 \
         --n-sink 4 \
         --window-size 1024 \
+        --max-length 2048 \
+        --stride 1024 \
         --output results/kvpress/wikitext_result.json"
 
 # PG19 kvpress StreamingLLM
@@ -178,10 +235,13 @@ run_experiment \
     "PG19 kvpress StreamingLLM" \
     "$PYTHON experiments/eval_kvpress.py \
         --dataset-name pg19 \
+        --dataset-config \"\" \
         --max-samples 1 \
         --max-eval-tokens 4096 \
         --n-sink 4 \
         --window-size 1024 \
+        --max-length 2048 \
+        --stride 1024 \
         --output results/kvpress/pg19_result.json"
 
 ################################################################################
@@ -198,6 +258,8 @@ run_experiment \
         --dataset-config wikitext-103-v1 \
         --max-samples 64 \
         --max-eval-tokens 4096 \
+        --max-length 2048 \
+        --stride 1024 \
         --ablation-type window_size \
         --output results/streaming_llm/ablation_window_size.json"
 
@@ -209,6 +271,8 @@ run_experiment \
         --dataset-config wikitext-103-v1 \
         --max-samples 64 \
         --max-eval-tokens 4096 \
+        --max-length 2048 \
+        --stride 1024 \
         --ablation-type n_sink \
         --output results/streaming_llm/ablation_n_sink.json"
 

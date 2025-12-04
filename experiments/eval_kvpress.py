@@ -17,7 +17,8 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Import kvpress
-from kvpress import StreamingLLMPress
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from kvpress import StreamingLLMPress, KeyRerotationPress
 
 from eval_utils import (
     load_tokenized_dataset,
@@ -179,6 +180,13 @@ def compute_perplexity_kvpress(
 
 def main():
     args = parse_args()
+    target_cache = args.n_sink + args.window_size
+    if args.max_length < target_cache:
+        print(
+            f"Warning: max_length({args.max_length}) < n_sink + window_size ({target_cache}), "
+            f"adjusting max_length to {target_cache}"
+        )
+        args.max_length = target_cache
     
     # Setup device and dtype
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -232,6 +240,17 @@ def main():
     ).to(device)
     model.eval()
     
+    if hasattr(model, "gpt_neox"):
+        rotary_emb = getattr(model.gpt_neox, "rotary_emb", None)
+        for layer in model.gpt_neox.layers:
+            attn = getattr(layer, "attention", None)
+            if attn is None:
+                continue
+            if rotary_emb is not None and not hasattr(attn, "rotary_emb"):
+                attn.rotary_emb = rotary_emb
+            if not hasattr(attn, "head_dim") and hasattr(attn, "head_size"):
+                attn.head_dim = attn.head_size
+    
     # Evaluate baseline
     print("\n" + "="*60)
     print("Evaluating Baseline (no compression)")
@@ -248,26 +267,26 @@ def main():
     print(f"Baseline Runtime: {baseline_time:.3f}s")
     print(f"Baseline Prefill: {baseline_prefill:.3f}s")
     
-    # Calculate compression_ratio from n_sink and window_size
-    # compression_ratio = tokens_to_prune / total_tokens
-    # We want to keep: n_sink + window_size tokens
-    # So we prune: total_tokens - (n_sink + window_size)
-    # compression_ratio = (total_tokens - n_sink - window_size) / total_tokens
-    max_cache_size = args.n_sink + args.window_size
+    max_cache_size = target_cache
     total_tokens = encoded_dataset.shape[1]
-    compression_ratio = max(0.0, (total_tokens - max_cache_size) / total_tokens)
+    keep_ratio = max_cache_size / args.max_length
+    compression_ratio = max(0.0, 1.0 - keep_ratio)
     
-    print(f"\nCalculated compression_ratio: {compression_ratio:.4f}")
-    print(f"(Keeping {max_cache_size} tokens out of {total_tokens})")
+    print(f"\nTarget cache size per layer: {max_cache_size} tokens")
+    print(f"Compression ratio (kvpress): {compression_ratio:.4f} (max_length={args.max_length})")
     
     # Evaluate kvpress StreamingLLM
     print("\n" + "="*60)
     print("Evaluating kvpress StreamingLLM")
     print("="*60)
     
-    press = StreamingLLMPress(
+    base_press = StreamingLLMPress(
         compression_ratio=compression_ratio,
         n_sink=args.n_sink
+    )
+
+    press = KeyRerotationPress(
+        press=base_press
     )
     
     streaming_ppl, streaming_time, streaming_prefill = compute_perplexity_kvpress(

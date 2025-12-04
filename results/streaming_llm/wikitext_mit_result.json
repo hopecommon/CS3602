@@ -10,8 +10,8 @@
   "streaming_llm": {
     "n_sink": 4,
     "window_size": 1024,
-    "implementation": "ours",
-    "cache_type": "StreamingKVCache",
+    "implementation": "mit",
+    "cache_type": "StartRecentKVCache",
     "max_cache_size": 1028
   },
   "device": "cuda",
@@ -24,13 +24,13 @@
   },
   "streaming": {
     "perplexity": 36.790061950683594,
-    "runtime_sec": 12.26627370598726,
-    "prefill_sec": 0.28472288500051945
+    "runtime_sec": 10.92088214296382,
+    "prefill_sec": 0.2822017959551886
   },
   "metrics": {
     "compression_ratio": 0.6982682712063399,
     "peak_memory_mb": 356.240234375,
-    "speedup": 1.4012066042213362,
+    "speedup": 1.5738274162302546,
     "ppl_increase_percent": 1.3436450466125576
   }
 }

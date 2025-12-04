@@ -1,4 +1,0 @@
-Decoding Latency (Cache=512)|SUCCESS|50s
-Decoding Latency (Cache=1024)|SUCCESS|49s
-Decoding Latency (Cache=2048)|SUCCESS|48s
-Decoding Latency (Cache=4096)|SUCCESS|49s
