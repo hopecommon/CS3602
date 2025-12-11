@@ -17,8 +17,8 @@ import matplotlib.pyplot as plt
 
 ROOT = Path("results/comprehensive")
 OUTPUT_DIR = Path("results/figures")
-DATASETS = ["wikitext", "pg19"]
-METHODS = ["baseline", "ours", "mit", "kvpress"]
+DATASETS = ["wikitext", "pg19_20k"]
+METHODS = ["baseline", "ours", "mit"]
 
 
 def load_decode_loop(dataset: str, method: str) -> Tuple[float, float]:

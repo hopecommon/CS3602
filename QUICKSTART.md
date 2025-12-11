@@ -43,22 +43,73 @@ cp .env.example .env
 # 编辑 .env 以适应当前环境
 ```
 
-## 2. 推荐流程（高标准实验）
+> `.env` 里新增的 `MODEL_NAME` 变量默认指向 `EleutherAI/pythia-2.8b`（该模型是本阶段的官方要求，运行后会在 `results/comprehensive/` 生成 2.8B 的 JSON）；若想保留旧的 70M 结果，可将 `MODEL_NAME` 改回 `EleutherAI/pythia-70m` 并将旧输出拷贝到 `results/legacy/`。
 
-1. **核心脚本**：`run_comprehensive_comparisons.sh` 会在 WikiText-103 和 PG19 上运行 4 × 3 = 12 条配置（chunked / decode-loop / kvpress official）。它会在 `results/comprehensive/` 产出 JSON。
-2. **执行命令**：
-   ```bash
-   chmod +x run_comprehensive_comparisons.sh
-   ./run_comprehensive_comparisons.sh
-   ```
-3. **后处理**：查看 `results/comprehensive/*.json`，提取 runtime/PPL/speedup，或用 `results/figures/` 中已有图表；本 README 已列出关键数据供报告撰写。
+## 2. 推荐流程（当前主入口）
+
+**最快复现**：`run_fixed_evaluation.sh`（decode-loop评估，对应 README 主表格）
+```bash
+chmod +x run_fixed_evaluation.sh
+./run_fixed_evaluation.sh   # 结果输出到 results/fixed_eval/
+```
+
+**全量矩阵（可选）**：`run_comprehensive_comparisons.sh` 会在 WikiText-103 (4k) 和 PG19 (20k) 上运行完整对比（chunked + decode-loop），输出到 `results/comprehensive/`。
+```bash
+chmod +x run_comprehensive_comparisons.sh
+./run_comprehensive_comparisons.sh
+```
+完成后可用 `experiments/plot_fixed_eval_results.py` 或 `experiments/plot_comprehensive_results.py` 生成图表。
+
+### 数据样本准备
+
+**WikiText-103**：使用 `scripts/prepare_wikitext_samples.py` 生成拼接样本
+```bash
+python scripts/prepare_wikitext_samples.py \
+  --lengths 4096 8192 \
+  --output-dir data/wikitext
+```
+
+**PG19**：使用 `scripts/prepare_pg19_samples.py` 从本地parquet或HuggingFace生成
+```bash
+python scripts/prepare_pg19_samples.py \
+  --parquet-dir /path/to/pg19/data \
+  --split test \
+  --lengths 20000 \
+  --output-dir data/pg19
+```
+
+> 注意：仓库已包含默认样本文件（`data/wikitext/long_context_4096.json` 和 `data/pg19/long_context_20000.json`），可直接使用。如需重新生成或使用不同长度，运行上述脚本即可。
+
+### 数据集角色说明
+* **WikiText-103 (4k tokens)**：短到中等上下文评估，验证 StreamingLLM 在常规长度下的性能表现
+* **PG19 (20k tokens)**：长上下文评估，测试超长序列下的加速效果和PPL质量
 
 ## 3. 辅助工具（按需调用）
 
-- `python experiments/run_decode_perplexity.py --method ours --dataset-name wikitext --dataset-config wikitext-103-v1`：单独跑 decode-loop。
-- `bash experiments/run_kvpress_streaming_decode.sh`：让 kvpress 也走 decode-loop；对于 PG19，可设置 `DATASET_NAME=pg19 DATASET_CONFIG=\"\" bash ...`。
-- `python experiments/plot_decode_loop_comparison.py`：根据 `results/comprehensive/*_decode_loop.json` 生成 runtime 与 PPL 图，输出到 `results/figures/`。
-- `python experiments/test_streaming_llm.py`：快速 smoke test（可选）。
+**单独运行评估**：
+```bash
+# decode-loop评估
+python experiments/run_decode_perplexity.py \
+  --method ours \
+  --dataset-name wikitext \
+  --dataset-config wikitext-103-v1 \
+  --max-eval-tokens 4096 \
+  --output results/test_ours.json
+```
+
+**生成图表**：
+```bash
+# 从 fixed_eval 结果生成完整图表集
+python experiments/plot_fixed_eval_results.py
+
+# 从 comprehensive 结果生成decode-loop对比图
+python experiments/plot_comprehensive_results.py
+```
+
+**快速测试**：
+```bash
+python experiments/test_streaming_llm.py  # smoke test
+```
 
 ## 4. Legacy 脚本（仅限对比 / 参考）
 
@@ -68,6 +119,7 @@ cp .env.example .env
 
 ## 5. 结果复现要求
 
-- 12 条核心 JSON 保存在 `results/comprehensive/`，包含 runtime/PPL/speedup/compression ratio。
-- 图表在 `results/figures/`，如需再现可用 Python/Matplotlib 读取 JSON。
-- 报告写在 README 中，提交时将 repo push 到 GitHub 即可。
+- 主评估结果保存在 `results/fixed_eval/`（8个JSON文件：2数据集 × 4方法）
+- 全量对比结果保存在 `results/comprehensive/`（16个JSON文件）
+- 图表在 `results/figures/`，可用 `plot_fixed_eval_results.py` 重新生成
+- 实验报告在 README.md 中，包含完整的数据表格和分析

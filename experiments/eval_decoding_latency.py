@@ -11,6 +11,7 @@ Per-Token Decoding Latency 评估脚本
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -35,7 +36,7 @@ def parse_args():
     parser.add_argument(
         "--model-name",
         type=str,
-        default="EleutherAI/pythia-70m",
+        default=os.environ.get("MODEL_NAME", "EleutherAI/pythia-2.8b"),
         help="模型名称"
     )
     parser.add_argument(

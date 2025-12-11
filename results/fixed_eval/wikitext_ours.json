@@ -1,0 +1,9 @@
+{
+  "method": "ours",
+  "dataset": "wikitext:wikitext-103-v1",
+  "perplexity": 9.793514251708984,
+  "total_time": 49.783805238083005,
+  "prefill_time": 0.30481551797129214,
+  "first_token_latency_sec": 0.15035156393423676,
+  "mode": "ours"
+}

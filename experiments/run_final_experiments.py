@@ -18,6 +18,7 @@
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -36,13 +37,15 @@ from eval_utils import (
     compute_perplexity,
 )
 
+DEFAULT_MODEL_NAME = os.environ.get("MODEL_NAME", "EleutherAI/pythia-2.8b")
+
 
 class ExperimentRunner:
     """实验运行器"""
     
     def __init__(
         self,
-        model_name: str = "EleutherAI/pythia-70m",
+        model_name: str = DEFAULT_MODEL_NAME,
         output_dir: Path = Path("results/final"),
         skip_existing: bool = True,
         device: Optional[str] = None,
@@ -157,7 +160,7 @@ class ExperimentRunner:
             dataset_name, dataset_config, max_samples, max_eval_tokens
         )
         
-        ppl, runtime, prefill = compute_perplexity(
+        stats = compute_perplexity(
             model=self.model,
             encoded_dataset=encoded_dataset,
             device=self.device,
@@ -167,7 +170,7 @@ class ExperimentRunner:
             max_cache_size=max_cache_size,
         )
         
-        return ppl, runtime, prefill
+        return stats.perplexity, stats.runtime_sec, stats.prefill_sec
     
     def run_streaming_experiment(
         self,
@@ -191,7 +194,7 @@ class ExperimentRunner:
             window_size=window_size
         )
         
-        ppl, runtime, prefill = compute_perplexity(
+        stats = compute_perplexity(
             model=self.model,
             encoded_dataset=encoded_dataset,
             device=self.device,
@@ -201,10 +204,9 @@ class ExperimentRunner:
             streaming_wrapper=wrapper,
             max_cache_size=wrapper.cache.max_size,
         )
-        
         compression_ratio = wrapper.get_compression_ratio(encoded_dataset.shape[1])
         
-        return ppl, runtime, prefill, compression_ratio
+        return stats.perplexity, stats.runtime_sec, stats.prefill_sec, compression_ratio
     
     def run_main_experiments(self):
         """运行主实验 (WikiText-103 和 PG19)"""
@@ -499,7 +501,7 @@ def parse_args():
     parser.add_argument(
         "--model-name",
         type=str,
-        default="EleutherAI/pythia-70m",
+        default=DEFAULT_MODEL_NAME,
         help="模型名称"
     )
     parser.add_argument(

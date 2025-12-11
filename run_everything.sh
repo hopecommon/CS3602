@@ -36,6 +36,16 @@ export HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}"
 export TRANSFORMERS_OFFLINE="${TRANSFORMERS_OFFLINE:-1}"
 mkdir -p "$HF_HOME" "$HF_DATASETS_CACHE"
 
+# 环境变量配置（可由 .env 或 shell 覆盖）
+N_SINK="${N_SINK:-4}"
+WINDOW_SIZE="${WINDOW_SIZE:-1024}"
+WIKITEXT_MAX_TOKENS="${WIKITEXT_MAX_TOKENS:-4096}"
+PG19_MAX_TOKENS="${PG19_MAX_TOKENS:-20000}"
+WIKITEXT_MAX_SAMPLES="${WIKITEXT_MAX_SAMPLES:-64}"
+PG19_MAX_SAMPLES="${PG19_MAX_SAMPLES:-1}"
+MAX_LENGTH="${MAX_LENGTH:-2048}"
+STRIDE="${STRIDE:-1024}"
+
 # 颜色定义
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -124,12 +134,12 @@ run_experiment \
     "$PYTHON experiments/eval_streaming_llm.py \
         --dataset-name wikitext \
         --dataset-config wikitext-103-v1 \
-        --max-samples 64 \
-        --max-eval-tokens 4096 \
+        --max-samples ${WIKITEXT_MAX_SAMPLES} \
+        --max-eval-tokens ${WIKITEXT_MAX_TOKENS} \
         --n-sink 0 \
-        --window-size 1024 \
-        --max-length 2048 \
-        --stride 1024 \
+        --window-size ${WINDOW_SIZE} \
+        --max-length ${MAX_LENGTH} \
+        --stride ${STRIDE} \
         --mode baseline \
         --output results/streaming_llm/wikitext_baseline.json"
 
@@ -139,12 +149,12 @@ run_experiment \
     "$PYTHON experiments/eval_streaming_llm.py \
         --dataset-name pg19 \
         --dataset-config \"\" \
-        --max-samples 1 \
-        --max-eval-tokens 4096 \
+        --max-samples ${PG19_MAX_SAMPLES} \
+        --max-eval-tokens ${PG19_MAX_TOKENS} \
         --n-sink 0 \
-        --window-size 1024 \
-        --max-length 2048 \
-        --stride 1024 \
+        --window-size ${WINDOW_SIZE} \
+        --max-length ${MAX_LENGTH} \
+        --stride ${STRIDE} \
         --mode baseline \
         --output results/streaming_llm/pg19_baseline.json"
 
@@ -160,12 +170,12 @@ run_experiment \
     "$PYTHON experiments/eval_streaming_llm.py \
         --dataset-name wikitext \
         --dataset-config wikitext-103-v1 \
-        --max-samples 64 \
-        --max-eval-tokens 4096 \
-        --n-sink 4 \
-        --window-size 1024 \
-        --max-length 2048 \
-        --stride 1024 \
+        --max-samples ${WIKITEXT_MAX_SAMPLES} \
+        --max-eval-tokens ${WIKITEXT_MAX_TOKENS} \
+        --n-sink ${N_SINK} \
+        --window-size ${WINDOW_SIZE} \
+        --max-length ${MAX_LENGTH} \
+        --stride ${STRIDE} \
         --mode streaming \
         --baseline-results results/streaming_llm/wikitext_baseline.json \
         --output results/streaming_llm/wikitext_result.json"
@@ -175,12 +185,12 @@ run_experiment \
     "$PYTHON experiments/eval_streaming_llm.py \
         --dataset-name wikitext \
         --dataset-config wikitext-103-v1 \
-        --max-samples 64 \
-        --max-eval-tokens 4096 \
-        --n-sink 4 \
-        --window-size 1024 \
-        --max-length 2048 \
-        --stride 1024 \
+        --max-samples ${WIKITEXT_MAX_SAMPLES} \
+        --max-eval-tokens ${WIKITEXT_MAX_TOKENS} \
+        --n-sink ${N_SINK} \
+        --window-size ${WINDOW_SIZE} \
+        --max-length ${MAX_LENGTH} \
+        --stride ${STRIDE} \
         --streaming-mode mit \
         --mode streaming \
         --baseline-results results/streaming_llm/wikitext_baseline.json \
@@ -192,12 +202,12 @@ run_experiment \
     "$PYTHON experiments/eval_streaming_llm.py \
         --dataset-name pg19 \
         --dataset-config \"\" \
-        --max-samples 1 \
-        --max-eval-tokens 4096 \
-        --n-sink 4 \
-        --window-size 1024 \
-        --max-length 2048 \
-        --stride 1024 \
+        --max-samples ${PG19_MAX_SAMPLES} \
+        --max-eval-tokens ${PG19_MAX_TOKENS} \
+        --n-sink ${N_SINK} \
+        --window-size ${WINDOW_SIZE} \
+        --max-length ${MAX_LENGTH} \
+        --stride ${STRIDE} \
         --mode streaming \
         --baseline-results results/streaming_llm/pg19_baseline.json \
         --output results/streaming_llm/pg19_result.json"
@@ -207,12 +217,12 @@ run_experiment \
     "$PYTHON experiments/eval_streaming_llm.py \
         --dataset-name pg19 \
         --dataset-config \"\" \
-        --max-samples 1 \
-        --max-eval-tokens 4096 \
-        --n-sink 4 \
-        --window-size 1024 \
-        --max-length 2048 \
-        --stride 1024 \
+        --max-samples ${PG19_MAX_SAMPLES} \
+        --max-eval-tokens ${PG19_MAX_TOKENS} \
+        --n-sink ${N_SINK} \
+        --window-size ${WINDOW_SIZE} \
+        --max-length ${MAX_LENGTH} \
+        --stride ${STRIDE} \
         --streaming-mode mit \
         --mode streaming \
         --baseline-results results/streaming_llm/pg19_baseline.json \
@@ -227,7 +237,7 @@ echo -e "${YELLOW}=== 阶段 3: kvpress 官方库对比实验 ===${NC}" | tee -a
 # WikiText-103 kvpress StreamingLLM (decode-loop)
 run_experiment \
     "WikiText-103 kvpress StreamingLLM (decode-loop)" \
-    "bash experiments/run_kvpress_streaming_decode.sh | tee -a \"$LOG_FILE\""
+    "MAX_SAMPLES=${WIKITEXT_MAX_SAMPLES} MAX_EVAL_TOKENS=${WIKITEXT_MAX_TOKENS} N_SINK=${N_SINK} WINDOW_SIZE=${WINDOW_SIZE} bash experiments/run_kvpress_streaming_decode.sh | tee -a \"$LOG_FILE\""
 
 # WikiText-103 kvpress StreamingLLM (official eval)
 run_experiment \
@@ -235,18 +245,18 @@ run_experiment \
     "$PYTHON experiments/eval_kvpress.py \
         --dataset-name wikitext \
         --dataset-config wikitext-103-v1 \
-        --max-samples 64 \
-        --max-eval-tokens 4096 \
-        --n-sink 4 \
-        --window-size 1024 \
-        --max-length 2048 \
-        --stride 1024 \
+        --max-samples ${WIKITEXT_MAX_SAMPLES} \
+        --max-eval-tokens ${WIKITEXT_MAX_TOKENS} \
+        --n-sink ${N_SINK} \
+        --window-size ${WINDOW_SIZE} \
+        --max-length ${MAX_LENGTH} \
+        --stride ${STRIDE} \
         --output results/kvpress/wikitext_result.json"
 
 # PG19 kvpress StreamingLLM (decode-loop)
 run_experiment \
     "PG19 kvpress StreamingLLM (decode-loop)" \
-    "DATASET_NAME=pg19 DATASET_CONFIG=\"\" bash experiments/run_kvpress_streaming_decode.sh | tee -a \"$LOG_FILE\""
+    "DATASET_NAME=pg19 DATASET_CONFIG=\"\" MAX_SAMPLES=${PG19_MAX_SAMPLES} MAX_EVAL_TOKENS=${PG19_MAX_TOKENS} N_SINK=${N_SINK} WINDOW_SIZE=${WINDOW_SIZE} bash experiments/run_kvpress_streaming_decode.sh | tee -a \"$LOG_FILE\""
 
 # PG19 kvpress StreamingLLM (official eval)
 run_experiment \
@@ -254,12 +264,12 @@ run_experiment \
     "$PYTHON experiments/eval_kvpress.py \
         --dataset-name pg19 \
         --dataset-config \"\" \
-        --max-samples 1 \
-        --max-eval-tokens 4096 \
-        --n-sink 4 \
-        --window-size 1024 \
-        --max-length 2048 \
-        --stride 1024 \
+        --max-samples ${PG19_MAX_SAMPLES} \
+        --max-eval-tokens ${PG19_MAX_TOKENS} \
+        --n-sink ${N_SINK} \
+        --window-size ${WINDOW_SIZE} \
+        --max-length ${MAX_LENGTH} \
+        --stride ${STRIDE} \
         --output results/kvpress/pg19_result.json"
 
 ################################################################################
@@ -274,10 +284,10 @@ run_experiment \
     "$PYTHON experiments/ablation_study.py \
         --dataset-name wikitext \
         --dataset-config wikitext-103-v1 \
-        --max-samples 64 \
-        --max-eval-tokens 4096 \
-        --max-length 2048 \
-        --stride 1024 \
+        --max-samples ${WIKITEXT_MAX_SAMPLES} \
+        --max-eval-tokens ${WIKITEXT_MAX_TOKENS} \
+        --max-length ${MAX_LENGTH} \
+        --stride ${STRIDE} \
         --ablation-type window_size \
         --output results/streaming_llm/ablation_window_size.json"
 
@@ -287,10 +297,10 @@ run_experiment \
     "$PYTHON experiments/ablation_study.py \
         --dataset-name wikitext \
         --dataset-config wikitext-103-v1 \
-        --max-samples 64 \
-        --max-eval-tokens 4096 \
-        --max-length 2048 \
-        --stride 1024 \
+        --max-samples ${WIKITEXT_MAX_SAMPLES} \
+        --max-eval-tokens ${WIKITEXT_MAX_TOKENS} \
+        --max-length ${MAX_LENGTH} \
+        --stride ${STRIDE} \
         --ablation-type n_sink \
         --output results/streaming_llm/ablation_n_sink.json"
 

@@ -3,6 +3,7 @@
 快速测试 StreamingLLM 实现是否正常工作
 """
 
+import os
 import sys
 from pathlib import Path
 
@@ -14,6 +15,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from streaming_llm import StreamingLLMWrapper
 
+DEFAULT_MODEL_NAME = os.environ.get("MODEL_NAME", "EleutherAI/pythia-2.8b")
+
 
 def test_basic_functionality():
     """测试基本功能"""
@@ -23,7 +26,7 @@ def test_basic_functionality():
     
     # 加载模型
     print("1. 加载模型...")
-    model_name = "EleutherAI/pythia-70m"
+    model_name = DEFAULT_MODEL_NAME
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     model = AutoModelForCausalLM.from_pretrained(

@@ -1,0 +1,62 @@
+{
+  "model": "EleutherAI/pythia-2.8b",
+  "dataset": "wikitext:wikitext-103-v1",
+  "ablation_type": "n_sink",
+  "total_tokens": 4096,
+  "results": [
+    {
+      "n_sink": 0,
+      "window_size": 1024,
+      "max_cache_size": 1024,
+      "perplexity": 17.685523986816406,
+      "runtime_sec": 50.63908292283304,
+      "prefill_sec": 0.32116548297926784,
+      "compression_ratio": 0.75
+    },
+    {
+      "n_sink": 1,
+      "window_size": 1024,
+      "max_cache_size": 1025,
+      "perplexity": 9.786052703857422,
+      "runtime_sec": 49.561018178006634,
+      "prefill_sec": 0.040719849057495594,
+      "compression_ratio": 0.749755859375
+    },
+    {
+      "n_sink": 2,
+      "window_size": 1024,
+      "max_cache_size": 1026,
+      "perplexity": 9.789254188537598,
+      "runtime_sec": 51.198007486062124,
+      "prefill_sec": 0.04064235696569085,
+      "compression_ratio": 0.74951171875
+    },
+    {
+      "n_sink": 4,
+      "window_size": 1024,
+      "max_cache_size": 1028,
+      "perplexity": 9.793514251708984,
+      "runtime_sec": 49.53424399998039,
+      "prefill_sec": 0.04085977212525904,
+      "compression_ratio": 0.7490234375
+    },
+    {
+      "n_sink": 8,
+      "window_size": 1024,
+      "max_cache_size": 1032,
+      "perplexity": 9.626825332641602,
+      "runtime_sec": 51.9360163109377,
+      "prefill_sec": 0.040822701063007116,
+      "compression_ratio": 0.748046875
+    },
+    {
+      "n_sink": 16,
+      "window_size": 1024,
+      "max_cache_size": 1040,
+      "perplexity": 9.616546630859375,
+      "runtime_sec": 51.254237682092935,
+      "prefill_sec": 0.041239744052290916,
+      "compression_ratio": 0.74609375
+    }
+  ]
+}

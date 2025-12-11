@@ -26,9 +26,19 @@ DATASET_NAME=${DATASET_NAME:-wikitext}
 DATASET_CONFIG=${DATASET_CONFIG:-wikitext-103-v1}
 SPLIT=${SPLIT:-test}
 TEXT_COLUMN=${TEXT_COLUMN:-text}
+MAX_SAMPLES=${MAX_SAMPLES:-64}
+MAX_EVAL_TOKENS=${MAX_EVAL_TOKENS:-4096}
+N_SINK=${N_SINK:-4}
+WINDOW_SIZE=${WINDOW_SIZE:-1024}
+
+export MAX_SAMPLES
+export MAX_EVAL_TOKENS
+export N_SINK
+export WINDOW_SIZE
 
 SCRIPT=$(cat <<'PY'
 import importlib.util
+import os
 import sys
 from pathlib import Path
 import time
@@ -45,16 +55,16 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 from torch.nn import functional as F
 from kvpress import StreamingLLMPress, KeyRerotationPress
 
-MODEL_NAME = "EleutherAI/pythia-70m"
-import os
+MODEL_NAME = os.environ.get("MODEL_NAME", "EleutherAI/pythia-2.8b")
 DATASET = os.environ.get("DATASET_NAME", "wikitext")
 CONFIG = os.environ.get("DATASET_CONFIG", "")
 SPLIT = os.environ.get("SPLIT", "test")
 TEXT_COLUMN = os.environ.get("TEXT_COLUMN", "text")
-MAX_SAMPLES = 64
-MAX_EVAL_TOKENS = 4096
-N_SINK = 4
-WINDOW_SIZE = 1024
+
+MAX_SAMPLES = int(os.environ.get("MAX_SAMPLES", "64"))
+MAX_EVAL_TOKENS = int(os.environ.get("MAX_EVAL_TOKENS", "4096"))
+N_SINK = int(os.environ.get("N_SINK", "4"))
+WINDOW_SIZE = int(os.environ.get("WINDOW_SIZE", "1024"))
 MAX_CACHE = N_SINK + WINDOW_SIZE
 
 print("Loading tokenizer...")

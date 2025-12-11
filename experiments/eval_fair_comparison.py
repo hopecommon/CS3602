@@ -16,6 +16,7 @@ Key improvements:
 """
 
 import argparse
+import os
 import sys
 import time
 from pathlib import Path
@@ -30,6 +31,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from streaming_llm import StreamingLLMWrapper
 from kvpress import StreamingLLMPress
 from eval_utils import load_tokenized_dataset
+
+DEFAULT_MODEL_NAME = os.environ.get("MODEL_NAME", "EleutherAI/pythia-2.8b")
 
 
 def warmup_model(model, device, num_warmup=3):
@@ -286,7 +289,7 @@ def parse_args():
     )
     
     # Model parameters
-    parser.add_argument("--model-name", type=str, default="EleutherAI/pythia-70m")
+    parser.add_argument("--model-name", type=str, default=DEFAULT_MODEL_NAME)
     parser.add_argument("--dtype", type=str, default="float16", choices=["float16", "bfloat16", "float32"])
     
     # Dataset parameters

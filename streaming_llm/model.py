@@ -15,8 +15,7 @@ from torch import nn
 from transformers.cache_utils import Cache
 
 from .kv_cache import StreamingKVCache
-from .mit_cache import StartRecentKVCache
-from .rope_utils import rerotate_keys
+from .rope_utils import rerotate_keys, build_rotation_cache
 
 
 @dataclass
@@ -44,6 +43,8 @@ class StreamingLLMWrapper:
         n_sink: int = 4,
         window_size: int = 1024,
         cache: Optional[Any] = None,
+        compress_every: int = 4,
+        reuse_rotation: bool = True,
     ):
         self.model = model
         self.n_sink = n_sink
@@ -53,11 +54,16 @@ class StreamingLLMWrapper:
             window_size=window_size,
         )
         self.cache_name = type(self.cache).__name__
-        self._use_start_recent = isinstance(self.cache, StartRecentKVCache)
+        self._supports_slice_api = hasattr(self.cache, "get_slice_info")
+        self.compress_every = max(1, int(compress_every))
+        self.reuse_rotation = reuse_rotation
 
         self._enabled = False
         self._positions: Optional[torch.Tensor] = None  # [batch, seq_len]
         self._layer_infos = self._collect_layer_infos()
+        self._cache_capacity = self._infer_cache_capacity()
+        self._layer_key_buffers: List[Optional[torch.Tensor]] = []
+        self._layer_value_buffers: List[Optional[torch.Tensor]] = []
 
     # ---------------------------------------------------------------------
     # Context manager helpers
@@ -107,44 +113,90 @@ class StreamingLLMWrapper:
         batch_size = first_layer.keys.shape[0]
         seq_len = first_layer.keys.shape[2]
 
-        self._ensure_position_buffer(batch_size, seq_len, device)
-
-        indices = self.cache.get_keep_indices(seq_len, device)
-        if indices is None:
+        cache_limit = self._cache_capacity
+        overflow = seq_len - cache_limit
+        if overflow <= 0:
+            self._ensure_position_buffer(batch_size, seq_len, device)
+            return
+        if overflow < self.compress_every:
+            self._ensure_position_buffer(batch_size, seq_len, device)
             return
 
-        old_positions = torch.index_select(self._positions, 1, indices)
+        self._ensure_position_buffer(batch_size, seq_len, device)
+
+        indices = None
+        slice_info = None
+        if self._supports_slice_api:
+            slice_info = self.cache.get_slice_info(seq_len)
+            sink_count, recent_start, _ = slice_info
+            old_positions = self._gather_start_recent_positions(
+                sink_count, recent_start, seq_len
+            )
+            kept = old_positions.shape[1]
+        else:
+            indices = self.cache.get_keep_indices(seq_len, device)
+            if indices is None:
+                return
+            old_positions = torch.index_select(self._positions, 1, indices)
+            kept = indices.shape[0]
+
         new_positions = torch.arange(
-            indices.shape[0], device=device, dtype=old_positions.dtype
+            kept, device=device, dtype=old_positions.dtype
         ).unsqueeze(0)
         new_positions = new_positions.expand(batch_size, -1)
 
-        slice_info = None
-        if self._use_start_recent:
-            slice_info = self.cache.get_slice_info(seq_len)
+        rotation_cache = {}
         for layer_idx, layer in enumerate(past_key_values.layers):
             key_states = layer.keys
             value_states = layer.values
 
-            if self._use_start_recent and slice_info is not None:
+            if self._supports_slice_api and slice_info is not None:
                 sink_count, recent_start, total_len = slice_info
+                buffer_key = self._get_or_init_buffer(
+                    self._layer_key_buffers, layer_idx, key_states
+                )
                 compressed_key = self._slice_cache_tensor(
-                    key_states, sink_count, recent_start, total_len
+                    key_states, sink_count, recent_start, total_len, kept, buffer_key
+                )
+                buffer_value = self._get_or_init_buffer(
+                    self._layer_value_buffers, layer_idx, value_states
                 )
                 compressed_value = self._slice_cache_tensor(
-                    value_states, sink_count, recent_start, total_len
+                    value_states, sink_count, recent_start, total_len, kept, buffer_value
                 )
             else:
                 compressed_key = torch.index_select(key_states, 2, indices).contiguous()
                 compressed_value = torch.index_select(value_states, 2, indices).contiguous()
 
             layer_info = self._layer_infos[min(layer_idx, len(self._layer_infos) - 1)]
+            rotation = None
+            if (
+                self.reuse_rotation
+                and layer_info.inv_freq is not None
+                and layer_info.rotary_ndims
+            ):
+                cache_key = (
+                    id(layer_info.inv_freq),
+                    layer_info.rotary_ndims,
+                    compressed_key.dtype,
+                )
+                rotation = rotation_cache.get(cache_key)
+                if rotation is None:
+                    rotation = build_rotation_cache(
+                        old_positions=old_positions,
+                        new_positions=new_positions,
+                        inv_freq=layer_info.inv_freq.to(device=device),
+                        rotary_dim=layer_info.rotary_ndims,
+                        dtype=compressed_key.dtype,
+                    )
+                    rotation_cache[cache_key] = rotation
             compressed_key = rerotate_keys(
                 compressed_key,
                 old_positions,
                 new_positions,
                 inv_freq=layer_info.inv_freq,
                 rotary_dim=layer_info.rotary_ndims,
+                precomputed=rotation,
             )
 
             layer.keys = compressed_key
@@ -158,6 +210,8 @@ class StreamingLLMWrapper:
         sink_count: int,
         recent_start: int,
         seq_len: int,
+        kept: int,
+        buffer: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Slice sink and recent regions (MIT-style) without gather.
@@ -171,9 +225,23 @@ class StreamingLLMWrapper:
             return tensor.new_empty(
                 tensor.shape[0], tensor.shape[1], 0, tensor.shape[-1]
             )
-        if len(parts) == 1:
+        if len(parts) == 1 and buffer is None:
             return parts[0].contiguous()
-        return torch.cat(parts, dim=2).contiguous()
+        if buffer is None:
+            return torch.cat(parts, dim=2).contiguous()
+
+        view = buffer[:, :, :kept, :]
+        offset = 0
+        if sink_count > 0:
+            length = min(sink_count, kept)
+            view[:, :, :length, :].copy_(tensor[:, :, :length, :])
+            offset += length
+        if recent_start < seq_len and offset < kept:
+            recent_slice = tensor[:, :, recent_start:seq_len, :]
+            length = min(recent_slice.shape[2], kept - offset)
+            view[:, :, offset : offset + length, :].copy_(recent_slice[:, :, :length, :])
+            offset += length
+        return view[:, :, :kept, :]
     # ---------------------------------------------------------------------
     # Helpers
     # ---------------------------------------------------------------------
@@ -245,6 +313,51 @@ class StreamingLLMWrapper:
     # ---------------------------------------------------------------------
     # Misc
     # ---------------------------------------------------------------------
+    def _infer_cache_capacity(self) -> int:
+        for attr in ("cache_size", "max_size", "max_cache_size"):
+            if hasattr(self.cache, attr):
+                return int(getattr(self.cache, attr))
+        raise ValueError(f"Cache {self.cache_name} must expose cache_size/max_size.")
+
+    def _gather_start_recent_positions(
+        self, sink_count: int, recent_start: int, seq_len: int
+    ) -> torch.Tensor:
+        parts = []
+        if sink_count > 0:
+            parts.append(self._positions[:, :sink_count])
+        if recent_start < seq_len:
+            parts.append(self._positions[:, recent_start:seq_len])
+        if not parts:
+            return self._positions.new_empty(self._positions.shape[0], 0)
+        if len(parts) == 1:
+            return parts[0].clone()
+        return torch.cat(parts, dim=1).clone()
+
+    def _get_or_init_buffer(
+        self,
+        store: List[Optional[torch.Tensor]],
+        layer_idx: int,
+        template: torch.Tensor,
+    ) -> torch.Tensor:
+        while len(store) <= layer_idx:
+            store.append(None)
+        buf = store[layer_idx]
+        needed_shape = (
+            template.shape[0],
+            template.shape[1],
+            self._cache_capacity,
+            template.shape[-1],
+        )
+        if (
+            buf is None
+            or buf.shape != needed_shape
+            or buf.dtype != template.dtype
+            or buf.device != template.device
+        ):
+            buf = torch.empty(needed_shape, dtype=template.dtype, device=template.device)
+            store[layer_idx] = buf
+        return buf
+
     def get_compression_ratio(self, seq_len: int) -> float:
         return self.cache.get_compression_ratio(seq_len)
 
@@ -254,6 +367,7 @@ class StreamingLLMWrapper:
             f"  model={type(self.model).__name__},\n"
             f"  n_sink={self.n_sink},\n"
             f"  window_size={self.window_size},\n"
+            f"  compress_every={self.compress_every},\n"
             f"  enabled={self._enabled}\n"
             f")"
         )

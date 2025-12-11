@@ -1,0 +1,41 @@
+{
+  "model": "EleutherAI/pythia-2.8b",
+  "dataset": "pg19:",
+  "split": "test",
+  "max_length": 1028,
+  "stride": 512,
+  "max_samples": 64,
+  "max_eval_tokens": 20000,
+  "total_tokens": 20000,
+  "streaming_llm": {
+    "n_sink": 4,
+    "window_size": 1024,
+    "max_cache_size": 1028,
+    "compression_ratio": 0.9486
+  },
+  "baseline": {
+    "perplexity": 20.364564895629883,
+    "runtime_sec": 2.06408310495317,
+    "prefill_sec": 0.32408207887783647,
+    "first_token_latency_sec": 0.3240788921248168,
+    "peak_memory_mb": 6559.98046875
+  },
+  "kvpress": {
+    "perplexity": 20.364564895629883,
+    "runtime_sec": 2.2486694019753486,
+    "prefill_sec": 0.08472793502733111,
+    "first_token_latency_sec": 0.08435565908439457,
+    "peak_memory_mb": 5949.98046875
+  },
+  "metrics": {
+    "speedup": 0.9179131014723514,
+    "compression_ratio": 0.9486,
+    "ppl_increase_percent": 0.0,
+    "peak_memory_mb": 5949.98046875,
+    "first_token_latency_sec": 0.08435565908439457,
+    "baseline_first_token_latency_sec": 0.3240788921248168,
+    "peak_memory_ratio": 0.9070119182662392
+  },
+  "device": "cuda",
+  "dtype": "torch.float16"
+}

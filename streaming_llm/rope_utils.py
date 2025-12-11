@@ -10,6 +10,27 @@ import torch
 from torch import Tensor
 
 
+def build_rotation_cache(
+    old_positions: Tensor,
+    new_positions: Tensor,
+    inv_freq: Tensor,
+    rotary_dim: int,
+    dtype: torch.dtype,
+) -> tuple[Tensor, Tensor]:
+    """
+    预计算 RoPE 旋转所需的 cos/sin, 供多层复用。
+    """
+    delta = (new_positions - old_positions).to(device=inv_freq.device, dtype=torch.float32)
+    freq = inv_freq[: rotary_dim // 2].to(device=inv_freq.device, dtype=torch.float32)
+    freq = freq.view(1, 1, -1)
+    delta = delta.unsqueeze(-1)
+    freqs = delta * freq
+    emb = torch.cat([freqs, freqs], dim=-1)
+    cos = emb.cos().to(dtype=dtype).unsqueeze(1)
+    sin = emb.sin().to(dtype=dtype).unsqueeze(1)
+    return cos, sin
+
+
 def rotate_half(x: Tensor) -> Tensor:
     """Rotate half of the hidden dimensions (RoPE helper)"""
     x1 = x[..., : x.shape[-1] // 2]
@@ -23,6 +44,7 @@ def rerotate_keys(
     new_positions: Tensor,
     inv_freq: Tensor | None,
     rotary_dim: int | None,
+    precomputed: tuple[Tensor, Tensor] | None = None,
 ) -> Tensor:
     """
     将压缩后的 keys 重新旋转,使其位置编码与新的 cache 位置对齐
@@ -45,19 +67,18 @@ def rerotate_keys(
         return keys
 
     # inv_freq 只需要前 rotary_dim // 2 个频率
-    freq = inv_freq[: rotary_dim // 2].to(device=keys.device, dtype=torch.float32)
-
-    # 计算位置增量并广播
-    delta = (new_positions - old_positions).to(device=keys.device, dtype=torch.float32)
-    delta = delta.unsqueeze(-1)  # [batch, seq_len_kept, 1]
-
-    freqs = delta * freq  # [batch, seq_len_kept, rotary_dim//2]
-    emb = torch.cat([freqs, freqs], dim=-1)  # [batch, seq_len_kept, rotary_dim]
-    cos = emb.cos().to(dtype=keys.dtype).unsqueeze(1)  # [batch, 1, seq_len_kept, rotary_dim]
-    sin = emb.sin().to(dtype=keys.dtype).unsqueeze(1)
+    if precomputed is None:
+        cos, sin = build_rotation_cache(
+            old_positions=old_positions.to(device=keys.device),
+            new_positions=new_positions.to(device=keys.device),
+            inv_freq=inv_freq.to(device=keys.device),
+            rotary_dim=rotary_dim,
+            dtype=keys.dtype,
+        )
+    else:
+        cos, sin = precomputed
 
     k_rot = keys[:, :, :, :rotary_dim]
     k_pass = keys[:, :, :, rotary_dim:]
     k_rot = k_rot * cos + rotate_half(k_rot) * sin
     return torch.cat([k_rot, k_pass], dim=-1)
-

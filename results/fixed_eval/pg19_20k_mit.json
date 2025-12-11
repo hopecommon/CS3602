@@ -1,0 +1,9 @@
+{
+  "method": "mit",
+  "dataset": "pg19:",
+  "perplexity": 20.173416137695312,
+  "total_time": 309.82612275285646,
+  "prefill_time": 0.3104676380753517,
+  "first_token_latency_sec": 0.160971645032987,
+  "mode": "mit"
+}

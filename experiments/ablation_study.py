@@ -6,9 +6,10 @@
 """
 
 import argparse
+import json
+import os
 import sys
 from pathlib import Path
-import json
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -22,6 +23,8 @@ from eval_utils import (
     compute_perplexity,
 )
 
+DEFAULT_MODEL_NAME = os.environ.get("MODEL_NAME", "EleutherAI/pythia-2.8b")
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description="StreamingLLM 消融实验")
@@ -29,7 +32,7 @@ def parse_args():
     parser.add_argument(
         "--model-name",
         type=str,
-        default="EleutherAI/pythia-70m",
+        default=DEFAULT_MODEL_NAME,
         help="模型名称"
     )
     parser.add_argument(
@@ -114,7 +117,7 @@ def run_ablation_window_size(
             window_size=window_size
         )
         
-        ppl, runtime, prefill = compute_perplexity(
+        stats = compute_perplexity(
             model=model,
             encoded_dataset=encoded_dataset,
             device=device,
@@ -131,14 +134,14 @@ def run_ablation_window_size(
             "window_size": window_size,
             "n_sink": n_sink,
             "max_cache_size": n_sink + window_size,
-            "perplexity": ppl,
-            "runtime_sec": runtime,
-            "prefill_sec": prefill,
+            "perplexity": stats.perplexity,
+            "runtime_sec": stats.runtime_sec,
+            "prefill_sec": stats.prefill_sec,
             "compression_ratio": compression_ratio,
         }
         results.append(result)
         
-        print(f"  PPL: {ppl:.2f}, Runtime: {runtime:.3f}s, "
+        print(f"  PPL: {stats.perplexity:.2f}, Runtime: {stats.runtime_sec:.3f}s, "
               f"Compression: {compression_ratio:.2%}")
     
     return results
@@ -173,7 +176,7 @@ def run_ablation_n_sink(
             window_size=window_size
         )
         
-        ppl, runtime, prefill = compute_perplexity(
+        stats = compute_perplexity(
             model=model,
             encoded_dataset=encoded_dataset,
             device=device,
@@ -190,14 +193,14 @@ def run_ablation_n_sink(
             "n_sink": n_sink,
             "window_size": window_size,
             "max_cache_size": n_sink + window_size,
-            "perplexity": ppl,
-            "runtime_sec": runtime,
-            "prefill_sec": prefill,
+            "perplexity": stats.perplexity,
+            "runtime_sec": stats.runtime_sec,
+            "prefill_sec": stats.prefill_sec,
             "compression_ratio": compression_ratio,
         }
         results.append(result)
         
-        print(f"  PPL: {ppl:.2f}, Runtime: {runtime:.3f}s, "
+        print(f"  PPL: {stats.perplexity:.2f}, Runtime: {stats.runtime_sec:.3f}s, "
               f"Compression: {compression_ratio:.2%}")
     
     return results

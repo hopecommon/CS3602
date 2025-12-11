@@ -2,11 +2,12 @@
 """
 StreamingLLM 评估脚本
 
-评估我们从零实现的 StreamingLLM 在 Pythia-70M 上的性能
+评估我们从零实现的 StreamingLLM 各种配置在预设模型上的性能
 """
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -21,20 +22,22 @@ from eval_utils import (
     load_tokenized_dataset,
     compute_perplexity,
     save_results,
-    print_results
+    print_results,
 )
+
+DEFAULT_MAX_EVAL_TOKENS = int(os.environ.get("MAX_EVAL_TOKENS", "4096"))
 
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="评估 StreamingLLM 在 Pythia-70M 上的性能"
+        description="评估 StreamingLLM 在指定模型上的性能"
     )
     
     # 模型参数
     parser.add_argument(
         "--model-name",
         type=str,
-        default="EleutherAI/pythia-70m",
+        default=os.environ.get("MODEL_NAME", "EleutherAI/pythia-2.8b"),
         help="模型名称"
     )
     parser.add_argument(
@@ -79,7 +82,7 @@ def parse_args():
     parser.add_argument(
         "--max-eval-tokens",
         type=int,
-        default=4096,
+        default=DEFAULT_MAX_EVAL_TOKENS,
         help="最大评估 token 数"
     )
     parser.add_argument(
@@ -215,24 +218,35 @@ def main():
     
     baseline_metrics = None
     baseline_source = None
+    baseline_first_token = None
+    baseline_peak_memory_mb = 0.0
     
     if args.mode in {"both", "baseline"}:
         print("\n" + "="*60)
         print("评估基线 (无压缩)")
         print("="*60)
-        baseline_ppl, baseline_time, baseline_prefill = compute_perplexity(
-        model=model,
-        encoded_dataset=encoded_dataset,
-        device=device,
-        max_length=args.max_length,
-        stride=args.stride,
-        use_streaming=False,
-        max_cache_size=args.n_sink + args.window_size,
-    )
+        baseline_stats = compute_perplexity(
+            model=model,
+            encoded_dataset=encoded_dataset,
+            device=device,
+            max_length=args.max_length,
+            stride=args.stride,
+            use_streaming=False,
+            max_cache_size=args.n_sink + args.window_size,
+        )
+        baseline_ppl = baseline_stats.perplexity
+        baseline_time = baseline_stats.runtime_sec
+        baseline_prefill = baseline_stats.prefill_sec
+        baseline_first_token = baseline_stats.first_token_latency_sec
+        if torch.cuda.is_available():
+            baseline_peak_memory_mb = torch.cuda.max_memory_allocated() / 1024 / 1024
+        baseline_first_token_value = baseline_first_token if baseline_first_token is not None else 0.0
         baseline_metrics = {
             "perplexity": baseline_ppl,
             "runtime_sec": baseline_time,
             "prefill_sec": baseline_prefill,
+            "first_token_latency_sec": baseline_first_token_value,
+            "peak_memory_mb": baseline_peak_memory_mb,
         }
         baseline_source = "computed"
         print(f"基线 PPL: {baseline_ppl:.2f}")
@@ -249,19 +263,28 @@ def main():
         baseline_source = f"loaded:{args.baseline_results}"
     else:
         print("\nStreaming 模式未提供基线, 将重新计算基线以便对比")
-        baseline_ppl, baseline_time, baseline_prefill = compute_perplexity(
+        baseline_stats = compute_perplexity(
             model=model,
             encoded_dataset=encoded_dataset,
             device=device,
             max_length=args.max_length,
             stride=args.stride,
-        use_streaming=False,
-        max_cache_size=args.n_sink + args.window_size,
+            use_streaming=False,
+            max_cache_size=args.n_sink + args.window_size,
         )
+        baseline_ppl = baseline_stats.perplexity
+        baseline_time = baseline_stats.runtime_sec
+        baseline_prefill = baseline_stats.prefill_sec
+        baseline_first_token = baseline_stats.first_token_latency_sec
+        if torch.cuda.is_available():
+            baseline_peak_memory_mb = torch.cuda.max_memory_allocated() / 1024 / 1024
+        baseline_first_token_value = baseline_first_token if baseline_first_token is not None else 0.0
         baseline_metrics = {
             "perplexity": baseline_ppl,
             "runtime_sec": baseline_time,
             "prefill_sec": baseline_prefill,
+            "first_token_latency_sec": baseline_first_token_value,
+            "peak_memory_mb": baseline_peak_memory_mb,
         }
         baseline_source = "computed"
     
@@ -290,10 +313,13 @@ def main():
         print_results(results)
         save_results(results, args.output)
         return
-    
+
+    if baseline_metrics and baseline_first_token is None:
+        baseline_first_token = baseline_metrics.get("first_token_latency_sec")
+        baseline_peak_memory_mb = baseline_metrics.get("peak_memory_mb", baseline_peak_memory_mb)
+
     streaming_metrics = None
     compression_ratio = None
-    peak_memory_mb = 0
     
     if args.mode in {"both", "streaming"}:
         print("\n" + "="*60)
@@ -314,20 +340,29 @@ def main():
             cache=cache_impl
         )
         streaming_cache_name = streaming_wrapper.cache_name
-        streaming_ppl, streaming_time, streaming_prefill = compute_perplexity(
+        streaming_stats = compute_perplexity(
             model=model,
             encoded_dataset=encoded_dataset,
             device=device,
             max_length=args.max_length,
             stride=args.stride,
-        use_streaming=True,
-        streaming_wrapper=streaming_wrapper,
-        max_cache_size=args.n_sink + args.window_size,
-    )
+            use_streaming=True,
+            streaming_wrapper=streaming_wrapper,
+            max_cache_size=args.n_sink + args.window_size,
+        )
+        streaming_ppl = streaming_stats.perplexity
+        streaming_time = streaming_stats.runtime_sec
+        streaming_prefill = streaming_stats.prefill_sec
+        streaming_first_token = streaming_stats.first_token_latency_sec
+        streaming_peak_memory_mb = 0.0
+        if torch.cuda.is_available():
+            streaming_peak_memory_mb = torch.cuda.max_memory_allocated() / 1024 / 1024
         streaming_metrics = {
             "perplexity": streaming_ppl,
             "runtime_sec": streaming_time,
             "prefill_sec": streaming_prefill,
+            "first_token_latency_sec": streaming_first_token,
+            "peak_memory_mb": streaming_peak_memory_mb,
         }
         compression_ratio = streaming_wrapper.get_compression_ratio(
             encoded_dataset.shape[1]
@@ -367,7 +402,9 @@ def main():
     metrics_block = {}
     if streaming_metrics:
         metrics_block["compression_ratio"] = compression_ratio
-        metrics_block["peak_memory_mb"] = peak_memory_mb
+        metrics_block["first_token_latency_sec"] = streaming_metrics.get("first_token_latency_sec", 0.0)
+        streaming_peak = streaming_metrics.get("peak_memory_mb", 0.0)
+        metrics_block["peak_memory_mb"] = streaming_peak
         if baseline_metrics and streaming_metrics["runtime_sec"] > 0:
             metrics_block["speedup"] = (
                 baseline_metrics["runtime_sec"] / streaming_metrics["runtime_sec"]
@@ -377,6 +414,9 @@ def main():
                 (streaming_metrics["perplexity"] - baseline_metrics["perplexity"])
                 / baseline_metrics["perplexity"]
             ) * 100
+            baseline_peak = baseline_metrics.get("peak_memory_mb", 0.0)
+            if baseline_peak > 0:
+                metrics_block["peak_memory_ratio"] = streaming_peak / baseline_peak
     if metrics_block:
         results["metrics"] = metrics_block
     
@@ -390,7 +430,15 @@ def main():
         print(f"加速比: {metrics_block['speedup']:.2f}x")
         print(f"压缩比: {compression_ratio:.2%}")
         print(f"PPL 增加: {metrics_block.get('ppl_increase_percent', 0):.2f}%")
-        print(f"峰值显存: {peak_memory_mb:.1f} MB")
+        peak_memory_print = metrics_block.get("peak_memory_mb")
+        if peak_memory_print is not None:
+            print(f"峰值显存 (streaming): {peak_memory_print:.1f} MB")
+        peak_ratio = metrics_block.get("peak_memory_ratio")
+        if peak_ratio is not None:
+            print(f"显存占比 (streaming/baseline): {peak_ratio:.2f}x")
+        first_token_latency = metrics_block.get("first_token_latency_sec")
+        if first_token_latency is not None:
+            print(f"首个 token latency: {first_token_latency:.4f}s")
         print(f"{'='*60}\n")
 
 

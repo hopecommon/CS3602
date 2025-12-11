@@ -1,0 +1,9 @@
+{
+  "method": "baseline",
+  "dataset": "wikitext:wikitext-103-v1",
+  "perplexity": 9.528085708618164,
+  "total_time": 164.11697025992908,
+  "prefill_time": 0.3807744418736547,
+  "first_token_latency_sec": 0.050145203014835715,
+  "mode": "baseline"
+}

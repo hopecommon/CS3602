@@ -7,8 +7,11 @@
 import time
 import random
 import json
+import os
+import re
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Tuple, Dict, Any
+from typing import Optional, Dict, Any
 
 import torch
 import torch.nn.functional as F
@@ -16,12 +19,76 @@ from torch import Tensor
 from datasets import load_dataset
 from transformers import AutoTokenizer
 
+
+def _load_json_entries(path: Path) -> list[dict]:
+    text = path.read_text(encoding="utf-8").strip()
+    if not text:
+        return []
+    try:
+        data = json.loads(text)
+        if isinstance(data, list):
+            return data
+        return [data]
+    except json.JSONDecodeError:
+        entries: list[dict] = []
+        for line in text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            entries.append(json.loads(line))
+        return entries
+
+@dataclass
+class PerplexityResult:
+    perplexity: float
+    runtime_sec: float
+    prefill_sec: float
+    first_token_latency_sec: float
+
+    def __iter__(self):
+        yield self.perplexity
+        yield self.runtime_sec
+        yield self.prefill_sec
+
+
 # 设置随机种子以确保可复现
 random.seed(42)
 
 # PG19 本地缓存目录
 PG19_CACHE_DIR = Path("data/pg19")
 PG19_CACHE_FILE = PG19_CACHE_DIR / "sample.json"
+
+# Utility functions
+def _extract_length_from_name(path: Path) -> Optional[int]:
+    match = re.search(r"long_context_(\d+)", path.name)
+    if match:
+        return int(match.group(1))
+    return None
+
+
+def _resolve_wikitext_sample_path() -> Optional[Path]:
+    env_override = os.environ.get("WIKITEXT_SAMPLE_FILE")
+    if env_override:
+        candidate = Path(env_override)
+        if candidate.exists():
+            return candidate
+        raise FileNotFoundError(f"Specified WIKITEXT_SAMPLE_FILE does not exist: {candidate}")
+    candidates = sorted(WIKITEXT_CACHE_DIR.glob("long_context_*.json"))
+    if not candidates:
+        return None
+    target_length = os.environ.get("WIKITEXT_SAMPLE_LENGTH")
+    if target_length:
+        chosen = [p for p in candidates if _extract_length_from_name(p) == int(target_length)]
+        if chosen:
+            return chosen[0]
+    candidates.sort(key=lambda p: (_extract_length_from_name(p) or 0, p.name), reverse=True)
+    return candidates[0]
+
+
+# WikiText 本地缓存目录
+WIKITEXT_CACHE_DIR = Path("data/wikitext")
+WIKITEXT_CACHE_FILE = WIKITEXT_CACHE_DIR / "sample.json"
+WIKITEXT_SAMPLES_PATTERN = WIKITEXT_CACHE_DIR / "long_context_*.json"
 
 
 def load_tokenized_dataset(
@@ -52,6 +119,33 @@ def load_tokenized_dataset(
     Returns:
         input_ids: tokenized 输入 [1, seq_len]
     """
+    # 特殊处理 WikiText: 优先读取预采样样本
+    if dataset_name.lower() == "wikitext":
+        print("检测到 WikiText 数据集...")
+        sample_path = _resolve_wikitext_sample_path()
+        if sample_path:
+            print(f"✓ 使用预采样 WikiText 样本: {sample_path.name}")
+            entries = _load_json_entries(sample_path)
+            if not entries:
+                raise ValueError(f"{sample_path} 中未包含有效样本")
+            if max_samples:
+                entries = entries[:max_samples]
+            texts = []
+            for entry in entries:
+                text = entry.get(text_column, "") or entry.get("text", "")
+                if text and not text.isspace():
+                    texts.append(text)
+            if not texts:
+                raise ValueError(f"{sample_path} 中没有可用文本")
+            concatenated = "\n\n".join(texts)
+            encodings = tokenizer(concatenated, return_tensors="pt")
+            input_ids = encodings.input_ids
+            if max_eval_tokens:
+                input_ids = input_ids[:, :max_eval_tokens]
+            print(f"  最终 token 数: {input_ids.shape[1]}")
+            return input_ids
+        print("  未找到采样文件，继续使用原始 WikiText 数据集")
+
     # 特殊处理 PG19: 下载一条数据到本地，后续使用本地缓存
     if dataset_name.lower() == "pg19":
         print("检测到 PG19 数据集...")
@@ -150,7 +244,7 @@ def compute_perplexity(
     use_streaming: bool = False,
     streaming_wrapper = None,
     max_cache_size: Optional[int] = None,
-) -> Tuple[float, float, float]:
+) -> PerplexityResult:
     """
     计算 perplexity
     
@@ -221,7 +315,12 @@ def compute_perplexity(
     
     ppl = torch.exp(torch.stack(nlls).sum() / total_tokens)
 
-    return ppl.item(), total_time, prefill_time
+    return PerplexityResult(
+        perplexity=ppl.item(),
+        runtime_sec=total_time,
+        prefill_sec=prefill_time,
+        first_token_latency_sec=0.0,
+    )
 
 
 def _compute_streaming_decode_perplexity(
@@ -230,7 +329,7 @@ def _compute_streaming_decode_perplexity(
     device: torch.device,
     max_cache_size: int,
     streaming_wrapper = None,
-) -> Tuple[float, float, float]:
+) -> PerplexityResult:
     """
     使用解码式评估 (逐 token) 计算 PPL 和时间
 
@@ -255,8 +354,11 @@ def _compute_streaming_decode_perplexity(
 
     total_nll = 0.0
     total_tokens = 0
+    first_token_time = 0.0
 
     if streaming_wrapper is None:
+        # Baseline: 使用 sliding window 限制上下文长度
+        # 这样可以避免超过模型的 max_position_embeddings 限制
         prefill_len = min(max_cache_size, seq_len)
         input_ids = encoded_dataset[:, :prefill_len].to(device)
         with torch.no_grad():
@@ -274,8 +376,10 @@ def _compute_streaming_decode_perplexity(
             total_tokens += labels.numel()
 
         prefill_time = time.perf_counter() - prefill_start
+        first_token_recorded = False
 
         for pos in range(prefill_len - 1, seq_len - 1):
+            iter_start = time.perf_counter()
             start_idx = max(0, pos + 1 - max_cache_size)
             context = encoded_dataset[:, start_idx:pos + 1].to(device)
             target = encoded_dataset[:, pos + 1].to(device)
@@ -291,6 +395,11 @@ def _compute_streaming_decode_perplexity(
             )
             total_nll += loss.item()
             total_tokens += target.numel()
+            iter_end = time.perf_counter()
+
+            if not first_token_recorded:
+                first_token_time = iter_end - iter_start
+                first_token_recorded = True
     else:
         past_key_values = None
         prefill_len = min(max_cache_size, seq_len)
@@ -314,8 +423,10 @@ def _compute_streaming_decode_perplexity(
             streaming_wrapper.update(past_key_values)
 
             prefill_time = time.perf_counter() - prefill_start
+            first_token_recorded = False
 
             for pos in range(prefill_len - 1, seq_len - 1):
+                iter_start = time.perf_counter()
                 current_input = encoded_dataset[:, pos:pos + 1].to(device)
                 target = encoded_dataset[:, pos + 1].to(device)
 
@@ -334,13 +445,22 @@ def _compute_streaming_decode_perplexity(
                 )
                 total_nll += loss.item()
                 total_tokens += target.numel()
-
                 past_key_values = outputs.past_key_values
                 streaming_wrapper.update(past_key_values)
+                iter_end = time.perf_counter()
+
+                if not first_token_recorded:
+                    first_token_time = iter_end - iter_start
+                    first_token_recorded = True
 
     total_time = time.perf_counter() - total_start
     ppl = torch.exp(torch.tensor(total_nll / total_tokens))
-    return ppl.item(), total_time, prefill_time
+    return PerplexityResult(
+        perplexity=ppl.item(),
+        runtime_sec=total_time,
+        prefill_sec=prefill_time,
+        first_token_latency_sec=first_token_time,
+    )
 
 
 _compute_streaming_perplexity = _compute_streaming_decode_perplexity

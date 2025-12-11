@@ -46,6 +46,11 @@ class StreamingKVCache:
         self.n_sink = n_sink
         self.window_size = window_size
         self.max_size = n_sink + window_size
+
+    @property
+    def cache_size(self) -> int:
+        """Total number of tokens retained after compression."""
+        return self.max_size
     
     def get_keep_indices(self, seq_len: int, device: torch.device) -> Optional[Tensor]:
         """
@@ -77,6 +82,16 @@ class StreamingKVCache:
             indices.append(torch.arange(0, sink_count, device=device))
         indices.append(torch.arange(recent_start, seq_len, device=device))
         return torch.cat(indices, dim=0)
+
+    def get_slice_info(self, seq_len: int) -> Tuple[int, int, int]:
+        """
+        Return (sink_count, recent_start, seq_len) for in-place slicing.
+        """
+        sink_count = min(self.n_sink, seq_len)
+        window_count = min(self.window_size, max(seq_len - sink_count, 0))
+        recent_start = seq_len - window_count
+        recent_start = max(recent_start, sink_count)
+        return sink_count, recent_start, seq_len
 
     def compress(
         self,

@@ -6,8 +6,15 @@ echo "Per-Token Decoding Latency 评估"
 echo "=========================================="
 echo ""
 
+ENV_FILE=".env"
+if [ -f "$ENV_FILE" ]; then
+  set -o allexport
+  source "$ENV_FILE"
+  set +o allexport
+fi
+
 # 设置参数
-MODEL="EleutherAI/pythia-70m"
+MODEL="${MODEL_NAME:-EleutherAI/pythia-2.8b}"
 DTYPE="float16"
 CACHE_SIZE=1024
 N_SINK=4

@@ -2,11 +2,12 @@
 """
 KVPress Official Implementation Evaluation Script
 
-Evaluate kvpress's official StreamingLLM implementation on Pythia-70M
+Evaluate kvpress's StreamingLLM implementation on the shared model
 for comparison with our from-scratch implementation.
 """
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -17,8 +18,10 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Import kvpress
-from transformers import AutoModelForCausalLM, AutoTokenizer
 from kvpress import StreamingLLMPress, KeyRerotationPress
+
+DEFAULT_MODEL_NAME = os.environ.get("MODEL_NAME", "EleutherAI/pythia-2.8b")
+DEFAULT_MAX_EVAL_TOKENS = int(os.environ.get("MAX_EVAL_TOKENS", "4096"))
 
 from eval_utils import (
     load_tokenized_dataset,
@@ -29,14 +32,14 @@ from eval_utils import (
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Evaluate kvpress StreamingLLM on Pythia-70M"
+        description="Evaluate kvpress StreamingLLM on the shared target model"
     )
     
     # Model parameters
     parser.add_argument(
         "--model-name",
         type=str,
-        default="EleutherAI/pythia-70m",
+        default=DEFAULT_MODEL_NAME,
         help="Model name"
     )
     parser.add_argument(
@@ -81,7 +84,7 @@ def parse_args():
     parser.add_argument(
         "--max-eval-tokens",
         type=int,
-        default=4096,
+        default=DEFAULT_MAX_EVAL_TOKENS,
         help="Maximum evaluation tokens"
     )
     parser.add_argument(
@@ -148,12 +151,20 @@ def compute_perplexity_kvpress(
     seq_len = encoded_dataset.size(1)
     
     context = press(model) if press is not None else nullcontext()
-    
+
+    if torch.cuda.is_available():
+        torch.cuda.reset_peak_memory_stats()
+
     total_start = time.perf_counter()
-    prefill_start = time.perf_counter()
-    
+    prefill_start = total_start
+    prefill_end = total_start
+    first_chunk_done = False
+    first_token_time = 0.0
+    first_token_recorded = False
+
     with context:
         for start_idx in range(0, seq_len, stride):
+            iter_start = time.perf_counter()
             begin_loc = max(start_idx + stride - max_length, 0)
             end_loc = min(start_idx + stride, seq_len)
             trg_len = end_loc - start_idx
@@ -168,14 +179,22 @@ def compute_perplexity_kvpress(
             nlls.append(neg_log_likelihood.detach().to("cpu"))
             total_tokens += trg_len
             
+            if not first_chunk_done:
+                prefill_end = time.perf_counter()
+                first_chunk_done = True
+
             if end_loc == seq_len:
                 break
-    
+            iter_end = time.perf_counter()
+            if not first_token_recorded:
+                first_token_time = iter_end - iter_start
+                first_token_recorded = True
+
     ppl = torch.exp(torch.stack(nlls).sum() / total_tokens)
     total_time = time.perf_counter() - total_start
-    prefill_time = time.perf_counter() - prefill_start
+    prefill_time = prefill_end - prefill_start
     
-    return ppl.item(), total_time, prefill_time
+    return ppl.item(), total_time, prefill_time, first_token_time
 
 
 def main():
@@ -255,7 +274,7 @@ def main():
     print("\n" + "="*60)
     print("Evaluating Baseline (no compression)")
     print("="*60)
-    baseline_ppl, baseline_time, baseline_prefill = compute_perplexity_kvpress(
+    baseline_ppl, baseline_time, baseline_prefill, baseline_first_token = compute_perplexity_kvpress(
         model=model,
         encoded_dataset=encoded_dataset,
         device=device,
@@ -263,14 +282,22 @@ def main():
         stride=args.stride,
         press=None,
     )
+    baseline_peak_memory_mb = 0.0
+    if torch.cuda.is_available():
+        baseline_peak_memory_mb = torch.cuda.max_memory_allocated() / 1024 / 1024
+    if torch.cuda.is_available():
+        torch.cuda.reset_peak_memory_stats()
     print(f"Baseline PPL: {baseline_ppl:.2f}")
     print(f"Baseline Runtime: {baseline_time:.3f}s")
     print(f"Baseline Prefill: {baseline_prefill:.3f}s")
-    
+    print(f"Baseline first token latency: {baseline_first_token:.4f}s")
+
     max_cache_size = target_cache
     total_tokens = encoded_dataset.shape[1]
-    keep_ratio = max_cache_size / args.max_length
-    compression_ratio = max(0.0, 1.0 - keep_ratio)
+    compression_ratio = max(
+        0.0,
+        1.0 - (max_cache_size / max(total_tokens, 1)),
+    )
     
     print(f"\nTarget cache size per layer: {max_cache_size} tokens")
     print(f"Compression ratio (kvpress): {compression_ratio:.4f} (max_length={args.max_length})")
@@ -289,7 +316,7 @@ def main():
         press=base_press
     )
     
-    streaming_ppl, streaming_time, streaming_prefill = compute_perplexity_kvpress(
+    streaming_ppl, streaming_time, streaming_prefill, streaming_first_token = compute_perplexity_kvpress(
         model=model,
         encoded_dataset=encoded_dataset,
         device=device,
@@ -297,20 +324,32 @@ def main():
         stride=args.stride,
         press=press,
     )
+    streaming_peak_memory_mb = 0.0
+    if torch.cuda.is_available():
+        streaming_peak_memory_mb = torch.cuda.max_memory_allocated() / 1024 / 1024
     print(f"kvpress StreamingLLM PPL: {streaming_ppl:.2f}")
     print(f"kvpress StreamingLLM Runtime: {streaming_time:.3f}s")
     print(f"kvpress StreamingLLM Prefill: {streaming_prefill:.3f}s")
+    print(f"kvpress first token latency: {streaming_first_token:.4f}s")
     
     # Calculate metrics
     speedup = baseline_time / streaming_time if streaming_time > 0 else 0
     ppl_increase = ((streaming_ppl - baseline_ppl) / baseline_ppl) * 100
-    
-    # Memory usage
-    peak_memory_mb = 0
-    if torch.cuda.is_available():
-        peak_memory_mb = torch.cuda.max_memory_allocated() / 1024 / 1024
+
     
     # Aggregate results
+    baseline_first_token_value = baseline_first_token if baseline_first_token is not None else 0.0
+    metrics = {
+        "speedup": speedup,
+        "compression_ratio": compression_ratio,
+        "ppl_increase_percent": ppl_increase,
+        "peak_memory_mb": streaming_peak_memory_mb,
+        "first_token_latency_sec": streaming_first_token,
+        "baseline_first_token_latency_sec": baseline_first_token_value,
+    }
+    if baseline_peak_memory_mb > 0:
+        metrics["peak_memory_ratio"] = streaming_peak_memory_mb / baseline_peak_memory_mb
+
     results = {
         "model": args.model_name,
         "dataset": f"{args.dataset_name}:{args.dataset_config}",
@@ -330,18 +369,17 @@ def main():
             "perplexity": baseline_ppl,
             "runtime_sec": baseline_time,
             "prefill_sec": baseline_prefill,
+            "first_token_latency_sec": baseline_first_token_value,
+            "peak_memory_mb": baseline_peak_memory_mb,
         },
         "kvpress": {
             "perplexity": streaming_ppl,
             "runtime_sec": streaming_time,
             "prefill_sec": streaming_prefill,
+            "first_token_latency_sec": streaming_first_token,
+            "peak_memory_mb": streaming_peak_memory_mb,
         },
-        "metrics": {
-            "speedup": speedup,
-            "compression_ratio": compression_ratio,
-            "ppl_increase_percent": ppl_increase,
-            "peak_memory_mb": peak_memory_mb,
-        },
+        "metrics": metrics,
         "device": str(device),
         "dtype": str(torch_dtype),
     }
@@ -356,7 +394,16 @@ def main():
     print(f"Speedup: {speedup:.2f}x")
     print(f"Compression ratio: {compression_ratio:.2%}")
     print(f"PPL increase: {ppl_increase:.2f}%")
-    print(f"Peak memory: {peak_memory_mb:.1f} MB")
+    print(f"Peak memory (streaming): {streaming_peak_memory_mb:.1f} MB")
+    peak_ratio = metrics.get("peak_memory_ratio")
+    if peak_ratio is not None:
+        print(f"Peak memory ratio: {peak_ratio:.2f}x")
+    first_token = metrics.get("first_token_latency_sec")
+    if first_token is not None:
+        print(f"First token latency (streaming): {first_token:.4f}s")
+    baseline_first_token = metrics.get("baseline_first_token_latency_sec")
+    if baseline_first_token is not None:
+        print(f"First token latency (baseline): {baseline_first_token:.4f}s")
     print(f"{'='*60}\n")
 
 
