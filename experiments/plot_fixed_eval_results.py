@@ -3,7 +3,7 @@
 Generate comparison plots for fixed evaluation results.
 
 Reads JSON files from results/fixed_eval/ and outputs runtime / PPL bar charts.
-Supports both decode-loop methods (baseline, ours, mit) and kvpress official results.
+Supports decode-loop methods (baseline, ours, kvpress, mit).
 """
 
 from __future__ import annotations
@@ -20,8 +20,8 @@ RESULTS_DIR = Path("results/fixed_eval")
 OUTPUT_DIR = Path("results/figures")
 DATASETS = ["wikitext", "pg19_20k"]
 DATASET_LABELS = {"wikitext": "WikiText-103\n(4k tokens)", "pg19_20k": "PG19\n(20k tokens)"}
-METHODS = ["baseline", "ours", "mit"]
-METHOD_LABELS = {"baseline": "Baseline", "ours": "Ours", "mit": "MIT-style"}
+DEFAULT_METHOD_ORDER = ["baseline", "ours", "kvpress", "mit"]
+METHOD_LABELS = {"baseline": "Baseline", "ours": "Ours", "kvpress": "KVPress", "mit": "MIT-style"}
 
 # Color scheme
 COLORS = {
@@ -40,28 +40,52 @@ def load_result(dataset: str, method: str) -> Dict:
     with open(path, "r") as f:
         return json.load(f)
 
+def _is_decode_loop_result(path: Path) -> bool:
+    try:
+        with open(path, "r") as f:
+            data = json.load(f)
+        return "total_time" in data
+    except Exception:
+        return False
+
+def available_methods() -> List[str]:
+    methods: List[str] = []
+    for method in DEFAULT_METHOD_ORDER:
+        ok = True
+        for dataset in DATASETS:
+            path = RESULTS_DIR / f"{dataset}_{method}.json"
+            if (not path.exists()) or (not _is_decode_loop_result(path)):
+                ok = False
+                break
+        if ok:
+            methods.append(method)
+    if "baseline" not in methods:
+        raise FileNotFoundError(f"Missing required baseline results under {RESULTS_DIR}")
+    return methods
+
 
 def plot_runtime_comparison():
     """Generate runtime comparison bar chart."""
     print("\n生成 Runtime 对比图...")
+    methods = available_methods()
     
     fig, ax = plt.subplots(figsize=(10, 6))
     
     x = np.arange(len(DATASETS))
-    width = 0.25
+    width = 0.25 if len(methods) >= 3 else 0.35
     
-    for i, method in enumerate(METHODS):
+    for i, method in enumerate(methods):
         runtimes = []
         for dataset in DATASETS:
             data = load_result(dataset, method)
             runtimes.append(data["total_time"])
         
-        offset = (i - 1) * width
+        offset = (i - (len(methods) - 1) / 2) * width
         bars = ax.bar(
             x + offset, 
             runtimes, 
             width, 
-            label=METHOD_LABELS[method],
+            label=METHOD_LABELS.get(method, method),
             color=COLORS[method],
             alpha=0.8,
             edgecolor="black",
@@ -100,24 +124,25 @@ def plot_runtime_comparison():
 def plot_ppl_comparison():
     """Generate PPL comparison bar chart."""
     print("\n生成 PPL 对比图...")
+    methods = available_methods()
     
     fig, ax = plt.subplots(figsize=(10, 6))
     
     x = np.arange(len(DATASETS))
-    width = 0.25
+    width = 0.25 if len(methods) >= 3 else 0.35
     
-    for i, method in enumerate(METHODS):
+    for i, method in enumerate(methods):
         ppls = []
         for dataset in DATASETS:
             data = load_result(dataset, method)
             ppls.append(data["perplexity"])
         
-        offset = (i - 1) * width
+        offset = (i - (len(methods) - 1) / 2) * width
         bars = ax.bar(
             x + offset,
             ppls,
             width,
-            label=METHOD_LABELS[method],
+            label=METHOD_LABELS.get(method, method),
             color=COLORS[method],
             alpha=0.8,
             edgecolor="black",
@@ -155,48 +180,38 @@ def plot_ppl_comparison():
 def plot_speedup():
     """Generate speedup bar chart."""
     print("\n生成加速比对比图...")
+    methods = [m for m in available_methods() if m != "baseline"]
     
     fig, ax = plt.subplots(figsize=(10, 6))
     
     x = np.arange(len(DATASETS))
-    width = 0.35
-    
-    speedups_ours = []
-    speedups_mit = []
+    width = 0.35 if len(methods) >= 2 else 0.5
+    speedup_series = {m: [] for m in methods}
     
     for dataset in DATASETS:
         baseline_data = load_result(dataset, "baseline")
-        ours_data = load_result(dataset, "ours")
-        mit_data = load_result(dataset, "mit")
-        
         baseline_time = baseline_data["total_time"]
-        speedups_ours.append(baseline_time / ours_data["total_time"])
-        speedups_mit.append(baseline_time / mit_data["total_time"])
-    
-    bars1 = ax.bar(
-        x - width/2,
-        speedups_ours,
-        width,
-        label="Ours",
-        color=COLORS["ours"],
-        alpha=0.8,
-        edgecolor="black",
-        linewidth=1.2
-    )
-    
-    bars2 = ax.bar(
-        x + width/2,
-        speedups_mit,
-        width,
-        label="MIT-style",
-        color=COLORS["mit"],
-        alpha=0.8,
-        edgecolor="black",
-        linewidth=1.2
-    )
+        for m in methods:
+            m_data = load_result(dataset, m)
+            speedup_series[m].append(baseline_time / m_data["total_time"])
+
+    bars_list = []
+    for i, m in enumerate(methods):
+        offset = (i - (len(methods) - 1) / 2) * width
+        bars = ax.bar(
+            x + offset,
+            speedup_series[m],
+            width,
+            label=METHOD_LABELS.get(m, m),
+            color=COLORS[m],
+            alpha=0.8,
+            edgecolor="black",
+            linewidth=1.2,
+        )
+        bars_list.append(bars)
     
     # Add value labels
-    for bars in [bars1, bars2]:
+    for bars in bars_list:
         for bar in bars:
             height = bar.get_height()
             ax.text(
@@ -228,48 +243,38 @@ def plot_speedup():
 def plot_ppl_increase():
     """Generate PPL increase percentage bar chart."""
     print("\n生成 PPL 增幅对比图...")
+    methods = [m for m in available_methods() if m != "baseline"]
     
     fig, ax = plt.subplots(figsize=(10, 6))
     
     x = np.arange(len(DATASETS))
-    width = 0.35
-    
-    ppl_increases_ours = []
-    ppl_increases_mit = []
+    width = 0.35 if len(methods) >= 2 else 0.5
+    ppl_increases = {m: [] for m in methods}
     
     for dataset in DATASETS:
         baseline_data = load_result(dataset, "baseline")
-        ours_data = load_result(dataset, "ours")
-        mit_data = load_result(dataset, "mit")
-        
         baseline_ppl = baseline_data["perplexity"]
-        ppl_increases_ours.append(((ours_data["perplexity"] - baseline_ppl) / baseline_ppl) * 100)
-        ppl_increases_mit.append(((mit_data["perplexity"] - baseline_ppl) / baseline_ppl) * 100)
-    
-    bars1 = ax.bar(
-        x - width/2,
-        ppl_increases_ours,
-        width,
-        label="Ours",
-        color=COLORS["ours"],
-        alpha=0.8,
-        edgecolor="black",
-        linewidth=1.2
-    )
-    
-    bars2 = ax.bar(
-        x + width/2,
-        ppl_increases_mit,
-        width,
-        label="MIT-style",
-        color=COLORS["mit"],
-        alpha=0.8,
-        edgecolor="black",
-        linewidth=1.2
-    )
+        for m in methods:
+            m_data = load_result(dataset, m)
+            ppl_increases[m].append(((m_data["perplexity"] - baseline_ppl) / baseline_ppl) * 100)
+
+    bars_list = []
+    for i, m in enumerate(methods):
+        offset = (i - (len(methods) - 1) / 2) * width
+        bars = ax.bar(
+            x + offset,
+            ppl_increases[m],
+            width,
+            label=METHOD_LABELS.get(m, m),
+            color=COLORS[m],
+            alpha=0.8,
+            edgecolor="black",
+            linewidth=1.2,
+        )
+        bars_list.append(bars)
     
     # Add value labels
-    for bars in [bars1, bars2]:
+    for bars in bars_list:
         for bar in bars:
             height = bar.get_height()
             ax.text(
@@ -304,24 +309,25 @@ def plot_ppl_increase():
 def plot_first_token_latency():
     """Generate first-token latency comparison."""
     print("\n生成 First-token Latency 对比图...")
+    methods = available_methods()
     
     fig, ax = plt.subplots(figsize=(10, 6))
     
     x = np.arange(len(DATASETS))
-    width = 0.25
+    width = 0.25 if len(methods) >= 3 else 0.35
     
-    for i, method in enumerate(METHODS):
+    for i, method in enumerate(methods):
         latencies = []
         for dataset in DATASETS:
             data = load_result(dataset, method)
             latencies.append(data["first_token_latency_sec"] * 1000)  # Convert to ms
         
-        offset = (i - 1) * width
+        offset = (i - (len(methods) - 1) / 2) * width
         bars = ax.bar(
             x + offset,
             latencies,
             width,
-            label=METHOD_LABELS[method],
+            label=METHOD_LABELS.get(method, method),
             color=COLORS[method],
             alpha=0.8,
             edgecolor="black",
@@ -359,24 +365,26 @@ def plot_first_token_latency():
 def plot_comprehensive_summary():
     """Generate comprehensive 2x2 summary plot."""
     print("\n生成综合对比图 (2×2)...")
-    
+    methods = available_methods()
+    speedup_methods = [m for m in methods if m != "baseline"]
+
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-    fig.suptitle("StreamingLLM Fixed Evaluation Results (pythia-2.8b)", 
+    fig.suptitle("StreamingLLM Fixed Evaluation Results (pythia-2.8b)",
                  fontsize=16, fontweight="bold", y=0.995)
-    
+
     x = np.arange(len(DATASETS))
-    width = 0.25
-    
+    width = 0.25 if len(methods) >= 3 else 0.35
+
     # Collect data
-    data_by_method = {method: {"runtime": [], "ppl": [], "speedup": [], "ppl_increase": []} 
-                      for method in METHODS}
+    data_by_method = {method: {"runtime": [], "ppl": [], "speedup": [], "ppl_increase": []}
+                      for method in methods}
     
     for dataset in DATASETS:
         baseline_data = load_result(dataset, "baseline")
         baseline_time = baseline_data["total_time"]
         baseline_ppl = baseline_data["perplexity"]
         
-        for method in METHODS:
+        for method in methods:
             method_data = load_result(dataset, method)
             data_by_method[method]["runtime"].append(method_data["total_time"])
             data_by_method[method]["ppl"].append(method_data["perplexity"])
@@ -392,10 +400,10 @@ def plot_comprehensive_summary():
     
     # (a) Runtime
     ax1 = axes[0, 0]
-    for i, method in enumerate(METHODS):
-        offset = (i - 1) * width
+    for i, method in enumerate(methods):
+        offset = (i - (len(methods) - 1) / 2) * width
         ax1.bar(x + offset, data_by_method[method]["runtime"], width,
-                label=METHOD_LABELS[method], color=COLORS[method], alpha=0.8,
+                label=METHOD_LABELS.get(method, method), color=COLORS[method], alpha=0.8,
                 edgecolor="black", linewidth=1.0)
     ax1.set_ylabel("Runtime (s)", fontweight="bold")
     ax1.set_title("(a) Runtime Comparison", fontweight="bold", pad=10)
@@ -406,10 +414,10 @@ def plot_comprehensive_summary():
     
     # (b) PPL
     ax2 = axes[0, 1]
-    for i, method in enumerate(METHODS):
-        offset = (i - 1) * width
+    for i, method in enumerate(methods):
+        offset = (i - (len(methods) - 1) / 2) * width
         ax2.bar(x + offset, data_by_method[method]["ppl"], width,
-                label=METHOD_LABELS[method], color=COLORS[method], alpha=0.8,
+                label=METHOD_LABELS.get(method, method), color=COLORS[method], alpha=0.8,
                 edgecolor="black", linewidth=1.0)
     ax2.set_ylabel("Perplexity", fontweight="bold")
     ax2.set_title("(b) Perplexity Comparison", fontweight="bold", pad=10)
@@ -420,10 +428,10 @@ def plot_comprehensive_summary():
     
     # (c) Speedup
     ax3 = axes[1, 0]
-    for i, method in enumerate(["ours", "mit"]):
-        offset = (i - 0.5) * width
+    for i, method in enumerate(speedup_methods):
+        offset = (i - (len(speedup_methods) - 1) / 2) * width
         bars = ax3.bar(x + offset, data_by_method[method]["speedup"], width,
-                       label=METHOD_LABELS[method], color=COLORS[method], alpha=0.8,
+                       label=METHOD_LABELS.get(method, method), color=COLORS[method], alpha=0.8,
                        edgecolor="black", linewidth=1.0)
         for bar in bars:
             height = bar.get_height()
@@ -439,10 +447,10 @@ def plot_comprehensive_summary():
     
     # (d) PPL Increase
     ax4 = axes[1, 1]
-    for i, method in enumerate(["ours", "mit"]):
-        offset = (i - 0.5) * width
+    for i, method in enumerate(speedup_methods):
+        offset = (i - (len(speedup_methods) - 1) / 2) * width
         bars = ax4.bar(x + offset, data_by_method[method]["ppl_increase"], width,
-                       label=METHOD_LABELS[method], color=COLORS[method], alpha=0.8,
+                       label=METHOD_LABELS.get(method, method), color=COLORS[method], alpha=0.8,
                        edgecolor="black", linewidth=1.0)
         for bar in bars:
             height = bar.get_height()

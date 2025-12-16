@@ -30,7 +30,7 @@ if [ -f "$ENV_FILE" ]; then
 fi
 
 # 离线缓存设置 (确保 Hugging Face 在本地工作)
-export HF_HOME="${HF_HOME:-/data2/jflin/CS3602/.cache/huggingface}"
+export HF_HOME="${HF_HOME:-$PWD/.cache/huggingface}"
 export HF_DATASETS_CACHE="${HF_DATASETS_CACHE:-$HF_HOME/datasets}"
 export HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}"
 export TRANSFORMERS_OFFLINE="${TRANSFORMERS_OFFLINE:-1}"

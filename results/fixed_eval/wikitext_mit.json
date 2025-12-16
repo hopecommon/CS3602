@@ -1,9 +1,0 @@
-{
-  "method": "mit",
-  "dataset": "wikitext:wikitext-103-v1",
-  "perplexity": 9.793514251708984,
-  "total_time": 50.209590094862506,
-  "prefill_time": 0.38450541510246694,
-  "first_token_latency_sec": 0.17804278107360005,
-  "mode": "mit"
-}

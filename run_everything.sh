@@ -30,7 +30,7 @@ if [ -f "$ENV_FILE" ]; then
 fi
 
 # 离线缓存设置 (确保 Hugging Face 在本地工作)
-export HF_HOME="${HF_HOME:-/data2/jflin/CS3602/.cache/huggingface}"
+export HF_HOME="${HF_HOME:-$PWD/.cache/huggingface}"
 export HF_DATASETS_CACHE="${HF_DATASETS_CACHE:-$HF_HOME/datasets}"
 export HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}"
 export TRANSFORMERS_OFFLINE="${TRANSFORMERS_OFFLINE:-1}"
@@ -38,7 +38,7 @@ mkdir -p "$HF_HOME" "$HF_DATASETS_CACHE"
 
 # 环境变量配置（可由 .env 或 shell 覆盖）
 N_SINK="${N_SINK:-4}"
-WINDOW_SIZE="${WINDOW_SIZE:-1024}"
+WINDOW_SIZE="${WINDOW_SIZE:-2048}"
 WIKITEXT_MAX_TOKENS="${WIKITEXT_MAX_TOKENS:-4096}"
 PG19_MAX_TOKENS="${PG19_MAX_TOKENS:-20000}"
 WIKITEXT_MAX_SAMPLES="${WIKITEXT_MAX_SAMPLES:-64}"

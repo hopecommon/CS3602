@@ -1,9 +1,9 @@
 {
   "method": "baseline",
   "dataset": "pg19:",
-  "perplexity": 20.064855575561523,
-  "total_time": 1005.1872670608573,
-  "prefill_time": 0.40641190693713725,
-  "first_token_latency_sec": 0.04939158004708588,
+  "perplexity": 8.824536323547363,
+  "total_time": 1446.18725,
+  "prefill_time": 0.6788189697265625,
+  "first_token_latency_sec": 0.07769638061523437,
   "mode": "baseline"
 }

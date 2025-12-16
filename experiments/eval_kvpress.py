@@ -16,6 +16,10 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
+# Also add the vendored kvpress package root so `import kvpress` resolves to
+# `kvpress/kvpress/__init__.py` instead of the top-level `kvpress/` directory
+# being treated as a namespace package.
+sys.path.insert(0, str(Path(__file__).parent.parent / "kvpress"))
 
 # Import kvpress
 from kvpress import StreamingLLMPress, KeyRerotationPress
@@ -149,50 +153,80 @@ def compute_perplexity_kvpress(
     nlls = []
     total_tokens = 0
     seq_len = encoded_dataset.size(1)
-    
+
     context = press(model) if press is not None else nullcontext()
 
+    use_cuda_timing = device.type == "cuda" and torch.cuda.is_available()
     if torch.cuda.is_available():
         torch.cuda.reset_peak_memory_stats()
 
-    total_start = time.perf_counter()
-    prefill_start = total_start
-    prefill_end = total_start
+    if use_cuda_timing:
+        start_evt = torch.cuda.Event(enable_timing=True)
+        prefill_end_evt = torch.cuda.Event(enable_timing=True)
+        end_evt = torch.cuda.Event(enable_timing=True)
+        first_start_evt = torch.cuda.Event(enable_timing=True)
+        first_end_evt = torch.cuda.Event(enable_timing=True)
+        start_evt.record()
+    else:
+        total_start = time.perf_counter()
+        prefill_start = total_start
+        prefill_end = total_start
+        first_token_time = 0.0
+
     first_chunk_done = False
-    first_token_time = 0.0
     first_token_recorded = False
 
     with context:
         for start_idx in range(0, seq_len, stride):
-            iter_start = time.perf_counter()
             begin_loc = max(start_idx + stride - max_length, 0)
             end_loc = min(start_idx + stride, seq_len)
             trg_len = end_loc - start_idx
-            input_ids = encoded_dataset[:, begin_loc:end_loc].to(device)
+            input_ids = encoded_dataset[:, begin_loc:end_loc]
             target_ids = input_ids.clone()
             target_ids[:, :-trg_len] = -100
-            
+
+            capture_first = first_chunk_done and (not first_token_recorded) and end_loc != seq_len
+            if use_cuda_timing and capture_first:
+                first_start_evt.record()
+            if (not use_cuda_timing) and capture_first:
+                iter_start = time.perf_counter()
             with torch.no_grad():
                 outputs = model(input_ids=input_ids, labels=target_ids, use_cache=True)
-            
+            if use_cuda_timing and capture_first:
+                first_end_evt.record()
+            if (not use_cuda_timing) and capture_first:
+                iter_end = time.perf_counter()
+                first_token_time = iter_end - iter_start
+
             neg_log_likelihood = outputs.loss * trg_len
             nlls.append(neg_log_likelihood.detach().to("cpu"))
             total_tokens += trg_len
             
             if not first_chunk_done:
-                prefill_end = time.perf_counter()
+                if use_cuda_timing:
+                    prefill_end_evt.record()
+                else:
+                    prefill_end = time.perf_counter()
                 first_chunk_done = True
 
             if end_loc == seq_len:
                 break
-            iter_end = time.perf_counter()
-            if not first_token_recorded:
-                first_token_time = iter_end - iter_start
+            if capture_first:
                 first_token_recorded = True
 
     ppl = torch.exp(torch.stack(nlls).sum() / total_tokens)
-    total_time = time.perf_counter() - total_start
-    prefill_time = prefill_end - prefill_start
+    if use_cuda_timing:
+        end_evt.record()
+        torch.cuda.synchronize()
+        total_time = start_evt.elapsed_time(end_evt) / 1000.0
+        prefill_time = start_evt.elapsed_time(prefill_end_evt) / 1000.0
+        if first_token_recorded:
+            first_token_time = first_start_evt.elapsed_time(first_end_evt) / 1000.0
+        else:
+            first_token_time = 0.0
+    else:
+        total_time = time.perf_counter() - total_start
+        prefill_time = prefill_end - prefill_start
     
     return ppl.item(), total_time, prefill_time, first_token_time
 
@@ -249,6 +283,7 @@ def main():
         max_eval_tokens=args.max_eval_tokens,
         trust_remote_code=args.trust_remote_code,
     )
+    encoded_dataset = encoded_dataset.to(device)
     print(f"Dataset size: {encoded_dataset.shape[1]} tokens")
     
     # Load model

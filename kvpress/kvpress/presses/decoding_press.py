@@ -11,6 +11,7 @@ from transformers.cache_utils import QuantizedCache
 
 from kvpress.presses.adakv_press import AdaKVPress
 from kvpress.presses.base_press import BasePress
+from kvpress.presses.key_rerotation_press import KeyRerotationPress
 from kvpress.presses.scorer_press import ScorerPress
 from kvpress.utils import extract_keys_and_values
 
@@ -98,11 +99,39 @@ class DecodingPress(BasePress):
         target_compression_ratio = self._find_target_compression_ratio(k_len, self.target_size)
         logger.debug(f"Compressing {k_len} to {self.target_size} with ratio {target_compression_ratio}")
 
-        original_compression_ratio = self.base_press.compression_ratio
+        # IMPORTANT: for RoPE models (e.g., GPTNeoX), after pruning tokens the KV cache must remain in
+        # chronological order and keys must be re-rotated, otherwise perplexity will degrade sharply.
+        #
+        # KeyRerotationPress implements the correct post-processing. We inline the selection logic here
+        # because DecodingPress needs to override the compression_ratio dynamically based on target_size.
+        if isinstance(self.base_press, ScorerPress):
+            if target_compression_ratio == 0.0:
+                return keys, values
+            original_compression_ratio = self.base_press.compression_ratio
+            self.base_press.compression_ratio = target_compression_ratio
+            try:
+                scores = self.base_press.score(module, hidden_states, keys, values, attentions, kwargs)
+            finally:
+                self.base_press.compression_ratio = original_compression_ratio
+
+            n_kept = int(k_len * (1 - target_compression_ratio))
+            if n_kept <= 0:
+                return keys, values
+            indices = scores.topk(n_kept, dim=-1).indices
+            indices = torch.sort(indices, dim=2).values
+
+            keys = KeyRerotationPress.rerotate_keys(module, indices, keys)
+            head_dim = getattr(module, "head_dim", getattr(module, "head_size", keys.shape[-1]))
+            values = values.gather(2, indices.unsqueeze(-1).expand(-1, -1, -1, head_dim)).contiguous()
+            return keys, values
+
+        # Fallback: keep previous behavior for AdaKVPress (or other supported presses).
+        original_compression_ratio = getattr(self.base_press, "compression_ratio", 0.0)
         self.base_press.compression_ratio = target_compression_ratio
-        result = self.base_press.compress(module, hidden_states, keys, values, attentions, kwargs)
-        self.base_press.compression_ratio = original_compression_ratio
-        return result
+        try:
+            return self.base_press.compress(module, hidden_states, keys, values, attentions, kwargs)
+        finally:
+            self.base_press.compression_ratio = original_compression_ratio
 
     def forward_hook(self, module: nn.Module, input: list[torch.Tensor], kwargs: dict, output: list):
         """
@@ -114,13 +143,22 @@ class DecodingPress(BasePress):
         3. Applies compression every N steps
         4. Clears the buffer after compression
         """
-        hidden_states = kwargs["hidden_states"]
-        cache = kwargs["past_key_values"]
+        hidden_states = kwargs.get("hidden_states")
+        if hidden_states is None and input:
+            hidden_states = input[0]
+        if hidden_states is None:
+            raise KeyError("Unable to locate hidden states in attention forward inputs.")
+
+        cache = kwargs.get("past_key_values") or kwargs.get("layer_past")
+        if cache is None:
+            return output
         q_len = hidden_states.shape[1]
         layer_idx = module.layer_idx
 
         # Only operate during decoding phase (after prefilling)
-        if kwargs["cache_position"][-1] <= q_len:
+        cache_position = kwargs.get("cache_position")
+        is_prefill = (cache_position[-1] <= q_len) if cache_position is not None else (q_len > 1)
+        if is_prefill:
             # We're still in prefilling phase, don't do anything
             return output
         # print(f"Adding hidden states to buffer: {hidden_states.shape}")
@@ -136,6 +174,9 @@ class DecodingPress(BasePress):
                 f"Applying decoding compression: layer_step_count ({self.layer_step_counts[layer_idx]}) >= compression_steps ({self.compression_interval})"  # noqa: E501
             )
 
+            if not hasattr(cache, "layers"):
+                # Unsupported cache type (e.g., legacy tuple-of-tensors past_key_values).
+                return output
             cache_layer = cache.layers[module.layer_idx]
             keys, values = extract_keys_and_values(cache, module.layer_idx)
 

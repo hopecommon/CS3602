@@ -35,7 +35,7 @@
 **1. Decode-loop (主评估方法)**:
 - **脚本**：`run_decode_perplexity.py` 调用 `eval_utils.compute_perplexity`
 - **Baseline实现**：Sliding window + 重算
-  * 每个decode步骤重新forward最近1028个token
+  * 每个decode步骤重新forward最近 `n_sink + window_size` 个 token（例如默认 4+2048=2052）
   * 使用`use_cache=False`，不复用KV cache
   * 复杂度：O(window_size) per token
   * 对齐StreamingLLM论文的baseline定义

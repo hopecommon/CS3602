@@ -9,8 +9,8 @@
       "n_sink": 4,
       "max_cache_size": 132,
       "perplexity": 14.652872085571289,
-      "runtime_sec": 67.25436931592412,
-      "prefill_sec": 0.6660350461024791,
+      "runtime_sec": 63.908609375,
+      "prefill_sec": 0.32998162841796874,
       "compression_ratio": 0.9677734375
     },
     {
@@ -18,8 +18,8 @@
       "n_sink": 4,
       "max_cache_size": 260,
       "perplexity": 12.892799377441406,
-      "runtime_sec": 63.740906913997605,
-      "prefill_sec": 0.02027766196988523,
+      "runtime_sec": 61.87337890625,
+      "prefill_sec": 0.019583776473999025,
       "compression_ratio": 0.9365234375
     },
     {
@@ -27,8 +27,8 @@
       "n_sink": 4,
       "max_cache_size": 516,
       "perplexity": 10.855164527893066,
-      "runtime_sec": 59.674068071180955,
-      "prefill_sec": 0.02393700508400798,
+      "runtime_sec": 58.111046875,
+      "prefill_sec": 0.022902944564819335,
       "compression_ratio": 0.8740234375
     },
     {
@@ -36,8 +36,8 @@
       "n_sink": 4,
       "max_cache_size": 1028,
       "perplexity": 9.793514251708984,
-      "runtime_sec": 51.4231564339716,
-      "prefill_sec": 0.040774928871542215,
+      "runtime_sec": 47.969390625,
+      "prefill_sec": 0.040705791473388674,
       "compression_ratio": 0.7490234375
     },
     {
@@ -45,18 +45,9 @@
       "n_sink": 4,
       "max_cache_size": 2052,
       "perplexity": 9.657918930053711,
-      "runtime_sec": 34.853150146082044,
-      "prefill_sec": 0.0791784159373492,
+      "runtime_sec": 33.07912890625,
+      "prefill_sec": 0.07646211242675781,
       "compression_ratio": 0.4990234375
-    },
-    {
-      "window_size": 4096,
-      "n_sink": 4,
-      "max_cache_size": 4100,
-      "perplexity": 88.71866607666016,
-      "runtime_sec": 0.15265804901719093,
-      "prefill_sec": 0.15264993999153376,
-      "compression_ratio": 0.0
     }
   ]
 }

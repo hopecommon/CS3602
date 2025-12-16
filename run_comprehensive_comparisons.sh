@@ -9,7 +9,7 @@ if [ -f "$ENV_FILE" ]; then
   set +o allexport
 fi
 
-export HF_HOME="${HF_HOME:-/data2/jflin/CS3602/.cache/huggingface}"
+export HF_HOME="${HF_HOME:-$PWD/.cache/huggingface}"
 export HF_DATASETS_CACHE="${HF_DATASETS_CACHE:-$HF_HOME/datasets}"
 export HF_HUB_OFFLINE=${HF_HUB_OFFLINE:-1}
 export TRANSFORMERS_OFFLINE=${TRANSFORMERS_OFFLINE:-1}
@@ -21,7 +21,7 @@ mkdir -p "$RESULT_ROOT"
 
 # Experiment parameters
 N_SINK="${N_SINK:-4}"
-WINDOW_SIZE="${WINDOW_SIZE:-1024}"
+WINDOW_SIZE="${WINDOW_SIZE:-2048}"
 WIKITEXT_MAX_TOKENS="${WIKITEXT_MAX_TOKENS:-4096}"
 PG19_20K_MAX_TOKENS="${PG19_20K_MAX_TOKENS:-20000}"
 

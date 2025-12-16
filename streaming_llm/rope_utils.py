@@ -10,6 +10,52 @@ import torch
 from torch import Tensor
 
 
+def apply_rotary_shift_inplace(
+    keys: Tensor,
+    *,
+    start_index: int,
+    cos: Tensor,
+    sin: Tensor,
+    rotary_dim: int,
+) -> Tensor:
+    """
+    Apply a constant RoPE shift to a contiguous suffix of keys in-place.
+
+    This is used for StreamingLLM start+recent pruning: sinks keep delta=0,
+    and all recent tokens share the same position delta, so we can rotate
+    the recent segment with a constant shift.
+
+    Args:
+        keys: [batch, heads, seq_len, head_dim]
+        start_index: starting token index (e.g., sink_count) to rotate.
+        cos/sin: [half] or broadcastable to [1,1,1,half]
+        rotary_dim: number of dims in head_dim using RoPE.
+    """
+    if rotary_dim <= 0:
+        return keys
+    rotary_dim = min(int(rotary_dim), int(keys.shape[-1]))
+    half = rotary_dim // 2
+    if half <= 0:
+        return keys
+
+    if start_index >= keys.shape[2]:
+        return keys
+
+    cos = cos.to(device=keys.device, dtype=keys.dtype).view(1, 1, 1, half)
+    sin = sin.to(device=keys.device, dtype=keys.dtype).view(1, 1, 1, half)
+
+    segment = keys[:, :, start_index:, : rotary_dim]
+    x1 = segment[..., :half]
+    x2 = segment[..., half : 2 * half]
+
+    # Use temporaries to avoid in-place overwrite hazards.
+    new1 = x1 * cos - x2 * sin
+    new2 = x1 * sin + x2 * cos
+    x1.copy_(new1)
+    x2.copy_(new2)
+    return keys
+
+
 def build_rotation_cache(
     old_positions: Tensor,
     new_positions: Tensor,

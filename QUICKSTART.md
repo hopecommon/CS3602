@@ -53,6 +53,12 @@ chmod +x run_fixed_evaluation.sh
 ./run_fixed_evaluation.sh   # 结果输出到 results/fixed_eval/
 ```
 
+如需额外方法（不默认运行）：
+```bash
+# 加上内部 mit-style slicing（仅用于调试对齐，非 MIT 官方 benchmark）
+FIXED_EVAL_METHODS="baseline ours kvpress mit" ./run_fixed_evaluation.sh
+```
+
 **全量矩阵（可选）**：`run_comprehensive_comparisons.sh` 会在 WikiText-103 (4k) 和 PG19 (20k) 上运行完整对比（chunked + decode-loop），输出到 `results/comprehensive/`。
 ```bash
 chmod +x run_comprehensive_comparisons.sh
@@ -102,8 +108,30 @@ python experiments/run_decode_perplexity.py \
 # 从 fixed_eval 结果生成完整图表集
 python experiments/plot_fixed_eval_results.py
 
+# 生成 fixed_eval 汇总表（Markdown）
+python experiments/summarize_fixed_eval_results.py
+
 # 从 comprehensive 结果生成decode-loop对比图
 python experiments/plot_comprehensive_results.py
+
+# 运行消融实验（会自动生成消融图表到 results/figures/）
+chmod +x run_ablation_studies.sh
+./run_ablation_studies.sh
+```
+
+**MIT 官方吞吐/显存 benchmark（非 PPL）**：
+```bash
+#
+# 注意：MIT 官方 repo 依赖较老版本的 transformers/huggingface-hub，建议用独立环境运行。
+# 例如先按 mit-streaming-llm/README.md 建一个 conda env，然后把 python 路径传给 MIT_BENCH_PYTHON。
+#
+python experiments/run_mit_official_benchmark.py \
+  --model-name-or-path /path/to/local/hf/snapshot_or_model_dir \
+  --data-json data/pg19/long_context_20000.json \
+  --output results/mit_official/pg19_20k_benchmark.json
+
+# 或在主脚本里启用（推荐）
+RUN_MIT_OFFICIAL_BENCHMARK=1 MIT_BENCH_PYTHON=/path/to/mit_env/bin/python ./run_fixed_evaluation.sh
 ```
 
 **快速测试**：

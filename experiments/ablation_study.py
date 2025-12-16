@@ -103,12 +103,19 @@ def run_ablation_window_size(
     """
     window_sizes = [128, 256, 512, 1024, 2048, 4096]
     results = []
+    seq_len = int(encoded_dataset.shape[1])
     
     print(f"\n{'='*60}")
     print(f"消融实验: Window Size (n_sink={n_sink})")
     print(f"{'='*60}\n")
     
     for window_size in window_sizes:
+        if n_sink + window_size >= seq_len:
+            print(
+                f"跳过 window_size={window_size}: max_cache_size={n_sink + window_size} "
+                f">= seq_len={seq_len}，decode-loop 将退化为单次 prefill，runtime 不可比"
+            )
+            continue
         print(f"测试 window_size={window_size}...")
         
         wrapper = StreamingLLMWrapper(
@@ -238,6 +245,8 @@ def main():
         tokenizer=tokenizer,
         max_eval_tokens=args.max_eval_tokens,
     )
+    if encoded_dataset.device != device:
+        encoded_dataset = encoded_dataset.to(device)
     print(f"数据集大小: {encoded_dataset.shape[1]} tokens")
     
     # 加载模型

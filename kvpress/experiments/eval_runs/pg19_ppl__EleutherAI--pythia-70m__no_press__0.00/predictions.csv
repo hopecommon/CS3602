@@ -1,2 +1,0 @@
-perplexity,prefill_runtime_sec,press,compression_ratio,runtime_sec,dataset,total_runtime_sec
-33.09471130371094,0.36225062899757177,no_press,0.0,0.3622529919957742,pg19_ppl,0.3622529919957742

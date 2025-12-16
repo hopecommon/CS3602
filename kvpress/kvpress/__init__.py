@@ -16,7 +16,10 @@ from kvpress.presses.cur_press import CURPress
 from kvpress.presses.decoding_press import DecodingPress
 from kvpress.presses.duo_attention_press import DuoAttentionPress
 from kvpress.presses.expected_attention_press import ExpectedAttentionPress
-from kvpress.presses.expected_attention_with_stats import ExpectedAttentionStatsPress
+try:
+    from kvpress.presses.expected_attention_with_stats import ExpectedAttentionStatsPress
+except ModuleNotFoundError:
+    ExpectedAttentionStatsPress = None
 from kvpress.presses.finch_press import FinchPress
 from kvpress.presses.key_rerotation_press import KeyRerotationPress
 from kvpress.presses.keydiff_press import KeyDiffPress
@@ -73,10 +76,12 @@ __all__ = [
     "KVzipPress",
     "DecodingPress",
     "PrefillDecodingPress",
-    "ExpectedAttentionStatsPress",
     "DecodingPress",
     "PrefillDecodingPress",
     "CompactorPress",
     "LeverageScorePress",
     "NonCausalAttnPress",
 ]
+
+if ExpectedAttentionStatsPress is not None:
+    __all__.append("ExpectedAttentionStatsPress")

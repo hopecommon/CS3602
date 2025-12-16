@@ -48,7 +48,9 @@ class PrefillDecodingPress(BasePress):
         q_len = hidden_states.shape[1]
 
         # Determine if we're in prefilling or decoding phase
-        if kwargs["cache_position"][-1] <= q_len and self.prefilling_press is not None:
+        cache_position = kwargs.get("cache_position")
+        is_prefill = (cache_position[-1] <= q_len) if cache_position is not None else (q_len > 1)
+        if is_prefill and self.prefilling_press is not None:
             return self.prefilling_press.compress(module, hidden_states, keys, values, attentions, kwargs)
         elif self.decoding_press is not None:
             return self.decoding_press.compress(module, hidden_states, keys, values, attentions, kwargs)
@@ -62,11 +64,17 @@ class PrefillDecodingPress(BasePress):
         """
         Forward hook that delegates to the appropriate press based on current phase.
         """
-        hidden_states = kwargs["hidden_states"]
+        hidden_states = kwargs.get("hidden_states")
+        if hidden_states is None and input:
+            hidden_states = input[0]
+        if hidden_states is None:
+            raise KeyError("Unable to locate hidden states in attention forward inputs.")
         q_len = hidden_states.shape[1]
 
         # Determine if we're in prefilling or decoding phase
-        if kwargs["cache_position"][-1] <= q_len and self.prefilling_press is not None:
+        cache_position = kwargs.get("cache_position")
+        is_prefill = (cache_position[-1] <= q_len) if cache_position is not None else (q_len > 1)
+        if is_prefill and self.prefilling_press is not None:
             return self.prefilling_press.forward_hook(module, input, kwargs, output)
         elif self.decoding_press is not None:
             return self.decoding_press.forward_hook(module, input, kwargs, output)

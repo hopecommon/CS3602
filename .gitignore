@@ -209,3 +209,5 @@ __marimo__/
 .sii/
 hfd.sh
 
+# Vendored repos: generated outputs
+kvpress/experiments/eval_runs/

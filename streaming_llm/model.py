@@ -15,7 +15,7 @@ from torch import nn
 from transformers.cache_utils import Cache
 
 from .kv_cache import StreamingKVCache
-from .rope_utils import rerotate_keys, build_rotation_cache
+from .rope_utils import rerotate_keys, build_rotation_cache, apply_rotary_shift_inplace
 
 
 @dataclass
@@ -59,11 +59,11 @@ class StreamingLLMWrapper:
         self.reuse_rotation = reuse_rotation
 
         self._enabled = False
-        self._positions: Optional[torch.Tensor] = None  # [batch, seq_len]
         self._layer_infos = self._collect_layer_infos()
         self._cache_capacity = self._infer_cache_capacity()
         self._layer_key_buffers: List[Optional[torch.Tensor]] = []
         self._layer_value_buffers: List[Optional[torch.Tensor]] = []
+        self._shift_rotation_cache: dict = {}
 
     # ---------------------------------------------------------------------
     # Context manager helpers
@@ -84,7 +84,8 @@ class StreamingLLMWrapper:
 
     def reset(self):
         """重置内部状态"""
-        self._positions = None
+        self._shift_rotation_cache.clear()
+        return
 
     # ---------------------------------------------------------------------
     # Core logic
@@ -116,36 +117,23 @@ class StreamingLLMWrapper:
         cache_limit = self._cache_capacity
         overflow = seq_len - cache_limit
         if overflow <= 0:
-            self._ensure_position_buffer(batch_size, seq_len, device)
             return
         if overflow < self.compress_every:
-            self._ensure_position_buffer(batch_size, seq_len, device)
             return
-
-        self._ensure_position_buffer(batch_size, seq_len, device)
 
         indices = None
         slice_info = None
         if self._supports_slice_api:
             slice_info = self.cache.get_slice_info(seq_len)
             sink_count, recent_start, _ = slice_info
-            old_positions = self._gather_start_recent_positions(
-                sink_count, recent_start, seq_len
-            )
-            kept = old_positions.shape[1]
+            kept = sink_count + max(0, seq_len - recent_start)
         else:
             indices = self.cache.get_keep_indices(seq_len, device)
             if indices is None:
                 return
-            old_positions = torch.index_select(self._positions, 1, indices)
-            kept = indices.shape[0]
+            old_positions_1d = indices.to(dtype=torch.long)
+            kept = int(old_positions_1d.numel())
 
-        new_positions = torch.arange(
-            kept, device=device, dtype=old_positions.dtype
-        ).unsqueeze(0)
-        new_positions = new_positions.expand(batch_size, -1)
-
-        rotation_cache = {}
         for layer_idx, layer in enumerate(past_key_values.layers):
             key_states = layer.keys
             value_states = layer.values
@@ -169,40 +157,84 @@ class StreamingLLMWrapper:
                 compressed_value = torch.index_select(value_states, 2, indices).contiguous()
 
             layer_info = self._layer_infos[min(layer_idx, len(self._layer_infos) - 1)]
-            rotation = None
-            if (
-                self.reuse_rotation
-                and layer_info.inv_freq is not None
-                and layer_info.rotary_ndims
-            ):
-                cache_key = (
-                    id(layer_info.inv_freq),
-                    layer_info.rotary_ndims,
-                    compressed_key.dtype,
+            if self._supports_slice_api and slice_info is not None:
+                # Start+Recent pruning implies a constant delta for the recent segment:
+                # delta = new_pos - old_pos = sink_count - recent_start
+                if (
+                    layer_info.inv_freq is not None
+                    and layer_info.rotary_ndims
+                    and recent_start < total_len
+                ):
+                    shift = int(sink_count - recent_start)
+                    if shift != 0:
+                        rotary_dim = int(layer_info.rotary_ndims)
+                        half = min(rotary_dim, compressed_key.shape[-1]) // 2
+                        if half > 0:
+                            cache_key = (
+                                id(layer_info.inv_freq),
+                                shift,
+                                half,
+                                compressed_key.dtype,
+                                compressed_key.device,
+                            )
+                            cached = self._shift_rotation_cache.get(cache_key)
+                            if cached is None:
+                                inv = layer_info.inv_freq.to(
+                                    device=compressed_key.device, dtype=torch.float32
+                                )[:half]
+                                angle = inv * float(shift)
+                                cos = angle.cos().to(dtype=compressed_key.dtype)
+                                sin = angle.sin().to(dtype=compressed_key.dtype)
+                                cached = (cos, sin, rotary_dim)
+                                self._shift_rotation_cache[cache_key] = cached
+                            cos, sin, rotary_dim = cached
+                            apply_rotary_shift_inplace(
+                                compressed_key,
+                                start_index=sink_count,
+                                cos=cos,
+                                sin=sin,
+                                rotary_dim=rotary_dim,
+                            )
+            else:
+                old_positions = old_positions_1d.unsqueeze(0).expand(batch_size, -1)
+                new_positions = (
+                    torch.arange(kept, device=device, dtype=torch.long)
+                    .unsqueeze(0)
+                    .expand(batch_size, -1)
                 )
-                rotation = rotation_cache.get(cache_key)
-                if rotation is None:
-                    rotation = build_rotation_cache(
-                        old_positions=old_positions,
-                        new_positions=new_positions,
-                        inv_freq=layer_info.inv_freq.to(device=device),
-                        rotary_dim=layer_info.rotary_ndims,
-                        dtype=compressed_key.dtype,
+                rotation = None
+                if (
+                    self.reuse_rotation
+                    and layer_info.inv_freq is not None
+                    and layer_info.rotary_ndims
+                ):
+                    cache_key = (
+                        id(layer_info.inv_freq),
+                        layer_info.rotary_ndims,
+                        compressed_key.dtype,
+                        compressed_key.device,
                     )
-                    rotation_cache[cache_key] = rotation
-            compressed_key = rerotate_keys(
-                compressed_key,
-                old_positions,
-                new_positions,
-                inv_freq=layer_info.inv_freq,
-                rotary_dim=layer_info.rotary_ndims,
-                precomputed=rotation,
-            )
+                    rotation = self._shift_rotation_cache.get(cache_key)
+                    if rotation is None:
+                        rotation = build_rotation_cache(
+                            old_positions=old_positions,
+                            new_positions=new_positions,
+                            inv_freq=layer_info.inv_freq.to(device=device),
+                            rotary_dim=layer_info.rotary_ndims,
+                            dtype=compressed_key.dtype,
+                        )
+                        self._shift_rotation_cache[cache_key] = rotation
+                compressed_key = rerotate_keys(
+                    compressed_key,
+                    old_positions,
+                    new_positions,
+                    inv_freq=layer_info.inv_freq,
+                    rotary_dim=layer_info.rotary_ndims,
+                    precomputed=rotation,
+                )
 
             layer.keys = compressed_key
             layer.values = compressed_value
-
-        self._positions = new_positions
 
     def _slice_cache_tensor(
         self,
@@ -242,31 +274,6 @@ class StreamingLLMWrapper:
             view[:, :, offset : offset + length, :].copy_(recent_slice[:, :, :length, :])
             offset += length
         return view[:, :, :kept, :]
-    # ---------------------------------------------------------------------
-    # Helpers
-    # ---------------------------------------------------------------------
-    def _ensure_position_buffer(self, batch_size: int, seq_len: int, device: torch.device):
-        """
-        初始化/扩展 position buffer,追踪 cache 内每个 token 的相对位置
-        """
-        if self._positions is None or self._positions.shape[0] != batch_size:
-            self._positions = torch.arange(
-                seq_len, device=device, dtype=torch.long
-            ).unsqueeze(0).expand(batch_size, -1).clone()
-            return
-
-        current_len = self._positions.shape[1]
-        if seq_len > current_len:
-            extra = torch.arange(
-                current_len,
-                seq_len,
-                device=device,
-                dtype=torch.long,
-            ).unsqueeze(0)
-            extra = extra.expand(batch_size, -1).clone()
-            self._positions = torch.cat([self._positions, extra], dim=1)
-        elif seq_len < current_len:
-            self._positions = self._positions[:, :seq_len]
 
     def _collect_layer_infos(self) -> List[LayerInfo]:
         """

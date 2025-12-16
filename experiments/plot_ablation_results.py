@@ -36,6 +36,7 @@ def plot_window_size_ablation():
     
     data = load_ablation_results("ablation_window_size.json")
     results = data["results"]
+    model_name = data.get("model", "unknown")
     
     # 提取数据
     window_sizes = [r["window_size"] for r in results]
@@ -45,7 +46,8 @@ def plot_window_size_ablation():
     
     # 创建图表 (2x2布局)
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-    fig.suptitle("Window Size Ablation Study (n_sink=4, pythia-2.8b)", 
+    fixed_n_sink = results[0].get("n_sink", 4) if results else 4
+    fig.suptitle(f"Window Size Ablation Study (n_sink={fixed_n_sink}, {model_name})", 
                  fontsize=16, fontweight="bold", y=0.995)
     
     # (a) PPL vs Window Size
@@ -127,6 +129,7 @@ def plot_n_sink_ablation():
     
     data = load_ablation_results("ablation_n_sink.json")
     results = data["results"]
+    model_name = data.get("model", "unknown")
     
     # 提取数据
     n_sinks = [r["n_sink"] for r in results]
@@ -136,7 +139,8 @@ def plot_n_sink_ablation():
     
     # 创建图表 (2x2布局)
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-    fig.suptitle("N_sink Ablation Study (window_size=1024, pythia-2.8b)", 
+    fixed_window = results[0].get("window_size", 1024) if results else 1024
+    fig.suptitle(f"N_sink Ablation Study (window_size={fixed_window}, {model_name})", 
                  fontsize=16, fontweight="bold", y=0.995)
     
     # (a) PPL vs N_sink
@@ -246,16 +250,17 @@ def plot_combined_summary():
     
     window_data = load_ablation_results("ablation_window_size.json")
     n_sink_data = load_ablation_results("ablation_n_sink.json")
+    model_name = window_data.get("model", "unknown")
     
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-    fig.suptitle("Ablation Study Summary (pythia-2.8b, WikiText-103)", 
+    fig.suptitle(f"Ablation Study Summary ({model_name}, WikiText-103)", 
                  fontsize=14, fontweight="bold", y=1.02)
     
     # (a) Window Size 关键指标
     ax1 = axes[0]
     window_results = window_data["results"]
-    ws_sizes = [r["window_size"] for r in window_results[:-1]]  # 排除4096异常值
-    ws_ppls = [r["perplexity"] for r in window_results[:-1]]
+    ws_sizes = [r["window_size"] for r in window_results]
+    ws_ppls = [r["perplexity"] for r in window_results]
     
     ax1_twin = ax1.twinx()
     
@@ -267,7 +272,7 @@ def plot_combined_summary():
     ax1.tick_params(axis='y', labelcolor=COLOR_PPL)
     ax1.grid(True, alpha=0.3)
     
-    ws_runtimes = [r["runtime_sec"] for r in window_results[:-1]]
+    ws_runtimes = [r["runtime_sec"] for r in window_results]
     line2 = ax1_twin.plot(ws_sizes, ws_runtimes, marker='s', linewidth=2.5, markersize=8,
                           color=COLOR_RUNTIME, label="Runtime")
     ax1_twin.set_ylabel("Runtime (s)", fontweight="bold", fontsize=11, color=COLOR_RUNTIME)
