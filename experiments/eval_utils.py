@@ -288,6 +288,29 @@ class NeoXFlashAttentionAdapter(nn.Module):
         super().__init__()
         self.original = original_module
         self.backend = backend
+        
+        # Extract components from original module
+        if hasattr(original_module, "query_key_value"):
+             self.query_key_value = original_module.query_key_value
+        else:
+             raise ValueError("NeoXFlashAttentionAdapter requires original_module to have query_key_value")
+             
+        if hasattr(original_module, "dense"):
+             self.dense = original_module.dense
+        else:
+             raise ValueError("NeoXFlashAttentionAdapter requires original_module to have dense")
+             
+        if hasattr(original_module, "rotary_emb"):
+             self.rotary_emb = original_module.rotary_emb
+        else:
+             # Try to find rotary embedding from parent model if not in module
+             # This is tricky without reference to model, so we assume standard NeoX structure
+             self.rotary_emb = None 
+
+        self.num_attention_heads = original_module.num_attention_heads
+        self.hidden_size = original_module.hidden_size
+        self.head_size = original_module.hidden_size // original_module.num_attention_heads
+        self.rotary_ndims = int(self.head_size * original_module.rotary_pct)
 
     def forward(
         self,
@@ -306,18 +329,10 @@ class NeoXFlashAttentionAdapter(nn.Module):
             mode = "flash"
         elif env == "0":
             mode = "math"
-        if mode == "flash":
-            ctx = sdp_kernel(enable_flash=True, enable_math=True, enable_mem_efficient=False)
-        elif mode == "math":
-            ctx = sdp_kernel(enable_flash=False, enable_math=True, enable_mem_efficient=False)
-        else:
-            info = check_sdpa_flash_available(dtype=torch.bfloat16)
-            if info.get("flash_enabled") and info.get("smoke_test", False):
-                ctx = sdp_kernel(enable_flash=True, enable_math=True, enable_mem_efficient=False)
-            else:
-                ctx = sdp_kernel(enable_flash=False, enable_math=True, enable_mem_efficient=False)
-        with ctx:
-            return self.original(
+        
+        # Fallback to original implementation if not flash mode or not using SDPA
+        if mode != "flash" and mode != "auto":
+             return self.original(
                 hidden_states=hidden_states,
                 attention_mask=attention_mask,
                 head_mask=head_mask,
@@ -327,6 +342,91 @@ class NeoXFlashAttentionAdapter(nn.Module):
                 position_ids=position_ids,
                 **kwargs,
             )
+
+        # Flash/Auto mode implementation
+        bsz, q_len, _ = hidden_states.size()
+        
+        # 1. QKV Projection
+        qkv = self.query_key_value(hidden_states)
+        qkv = qkv.view(bsz, q_len, 3, self.num_attention_heads, self.head_size)
+        qkv = qkv.permute(2, 0, 3, 1, 4) # [3, bsz, num_heads, q_len, head_size]
+        query, key, value = qkv[0], qkv[1], qkv[2]
+        
+        # 2. RoPE (Manual implementation since we bypass original forward)
+        # Note: This relies on streaming_llm already handling position updates for cache
+        # If position_ids is None, infer from cache or sequence
+        if hasattr(self.original, "rotary_emb"):
+             rotary_emb = self.original.rotary_emb
+        elif self.rotary_emb:
+             rotary_emb = self.rotary_emb
+        else:
+             # Fallback: try to find it attached to self.original (some implementations)
+             rotary_emb = getattr(self.original, "rotary_emb", None)
+
+        if rotary_emb is not None:
+             if position_ids is None:
+                  # Infer position_ids
+                  past_length = 0
+                  if layer_past is not None:
+                      # past_key_values[0] is keys: [bsz, num_heads, past_len, head_size]
+                      past_length = layer_past[0].shape[-2]
+                  position_ids = torch.arange(past_length, past_length + q_len, dtype=torch.long, device=hidden_states.device)
+                  position_ids = position_ids.unsqueeze(0).expand(bsz, -1)
+             
+             cos, sin = rotary_emb(value, seq_len=position_ids.max() + 1)
+             # Pythia/NeoX RoPE usually applies to query and key
+             # Need to match dimensions for apply_rotary_pos_emb
+             # Standard implementation:
+             from transformers.models.gpt_neox.modeling_gpt_neox import apply_rotary_pos_emb
+             query, key = apply_rotary_pos_emb(query, key, cos, sin, position_ids)
+
+        # 3. KV Cache Management
+        if layer_past is not None:
+            past_key, past_value = layer_past
+            key = torch.cat((past_key, key), dim=-2)
+            value = torch.cat((past_value, value), dim=-2)
+        
+        if use_cache:
+            present = (key, value)
+        else:
+            present = None
+
+        # 4. SDPA Call
+        # SDPA expects [bsz, num_heads, q_len, head_size]
+        # Our Q/K/V are currently [bsz, num_heads, seq_len, head_size]
+        
+        # Create causal mask if needed (SDPA handles is_causal=True for training, but here we might have cache)
+        # If using cache (inference), we attend to all past + current. 
+        # For the new query tokens, they attend to all previous tokens and themselves (causal).
+        # Since we are usually decoding 1 token at a time or prefilling, we can use is_causal=True if q_len > 1 and no mask provided.
+        # But with cache, it's safer to provide explicit mask or rely on SDPA's behavior with dropout=0.
+        
+        # For inference with cache, q_len is usually 1. is_causal doesn't matter much for 1 token.
+        # For prefill, q_len > 1.
+        
+        # Context manager for SDPA
+        ctx_manager = sdp_kernel(enable_flash=True, enable_math=True, enable_mem_efficient=False)
+        
+        with ctx_manager:
+            attn_output = F.scaled_dot_product_attention(
+                query, 
+                key, 
+                value, 
+                attn_mask=None, 
+                dropout_p=0.0, 
+                is_causal=True if q_len > 1 else False
+            )
+        
+        # 5. Output Projection
+        attn_output = attn_output.transpose(1, 2).contiguous() # [bsz, q_len, num_heads, head_size]
+        attn_output = attn_output.view(bsz, q_len, self.hidden_size)
+        
+        output = self.dense(attn_output)
+        
+        if output_attentions:
+            return (output, present, None) # No attention weights from SDPA
+            
+        return (output, present)
 
 def wrap_attention_modules(model: nn.Module, backend: str = "auto"):
     for name, module in model.named_modules():
@@ -507,9 +607,9 @@ def _compute_streaming_decode_perplexity(
             prefill_time = time.perf_counter() - prefill_start
             first_token_recorded = False
 
-        for pos in range(prefill_len - 1, seq_len - 1):
-            start_idx = max(0, pos + 1 - max_cache_size)
-            context = encoded_dataset[:, start_idx:pos + 1]
+            for pos in tqdm(range(prefill_len - 1, seq_len - 1), desc="Decoding (Baseline)"):
+                start_idx = max(0, pos + 1 - max_cache_size)
+                context = encoded_dataset[:, start_idx:pos + 1]
             target = encoded_dataset[:, pos + 1]
 
             if use_cuda_timing and not first_token_recorded:
