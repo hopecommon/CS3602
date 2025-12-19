@@ -13,6 +13,7 @@ import json
 import re
 import subprocess
 import sys
+import os
 from os import environ
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -139,7 +140,7 @@ def _run_one(
     # Ensure `mit-streaming-llm/` is importable as a package root for `streaming_llm.*`
     pythonpath = str(cwd)
     env["PYTHONPATH"] = pythonpath + (
-        (":" + env["PYTHONPATH"]) if env.get("PYTHONPATH") else ""
+        (os.pathsep + env["PYTHONPATH"]) if env.get("PYTHONPATH") else ""
     )
 
     proc = subprocess.run(cmd, text=True, capture_output=True, cwd=str(cwd), env=env)

@@ -22,7 +22,26 @@ pip install flash-attn --no-build-isolation
 
 > **注意**: `flash-attn` 是可选的，但在支持的 GPU 上安装它能获得最佳性能。如果没有安装，代码会自动回退到 PyTorch 内置的 math 后端。
 
-## 2. 快速验证 (Smoke Test)
+## 2. Windows 运行指南 (新增)
+
+如果你在 Windows 环境下运行，请注意以下几点：
+
+1.  **FlashAttention 支持**: Windows 原生不支持 `flash-attn` 库。代码会自动检测并在日志中显示 `FlashAttention not available`，然后回退到 Math Backend。这是预期行为，评测依然可以跑通，但速度会比 Linux + Flash 慢。
+2.  **启动方式**: 我们提供了一个 PowerShell 脚本来替代 Shell 脚本。
+
+**运行方法**:
+
+在 PowerShell 中执行：
+```powershell
+.\run_final_experiments.ps1
+```
+
+或者直接使用 Python:
+```bash
+python experiments/run_final_experiments.py --model-name EleutherAI/pythia-2.8b
+```
+
+## 3. 快速验证 (Smoke Test)
 
 首先运行一个极简的验证脚本，确认 FlashAttention 适配器是否能被正确加载且不会报错。
 

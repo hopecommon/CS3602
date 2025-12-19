@@ -66,6 +66,20 @@ chmod +x run_comprehensive_comparisons.sh
 ```
 完成后可用 `experiments/plot_fixed_eval_results.py` 或 `experiments/plot_comprehensive_results.py` 生成图表。
 
+### Windows 运行指南
+
+- 使用 `PowerShell` 运行：
+  ```powershell
+  .\run_final_experiments.ps1
+  ```
+- 或直接用 Python（无需 Shell 脚本）：
+  ```powershell
+  python experiments/run_final_experiments.py --model-name EleutherAI/pythia-2.8b
+  ```
+- 说明：
+  - Windows 环境会自动检测 GPU 并回退到合适的注意力后端；若未安装 FlashAttention，代码会使用 PyTorch SDPA 的 math/flash 后端自适配。
+  - 如需设置缓存路径，PowerShell 中可执行：`$env:HF_HOME = "$PWD\.cache\huggingface"`。
+
 ### 数据样本准备
 
 **WikiText-103**：使用 `scripts/prepare_wikitext_samples.py` 生成拼接样本

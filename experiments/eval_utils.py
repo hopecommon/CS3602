@@ -16,7 +16,6 @@ from typing import Optional, Dict, Any
 import torch
 import torch.nn.functional as F
 from torch import Tensor
-from datasets import load_dataset
 from transformers import AutoTokenizer
 from torch.backends.cuda import sdp_kernel
 import torch.nn as nn
@@ -199,6 +198,7 @@ def load_tokenized_dataset(
                 print("注意: 只下载一条样本以节省空间和时间")
                 
                 # 流式加载前 N 条作为候选
+                from datasets import load_dataset
                 dataset = load_dataset(
                     dataset_name,
                     split=split,
@@ -232,6 +232,7 @@ def load_tokenized_dataset(
     
     else:
         # 其他数据集的正常加载逻辑
+        from datasets import load_dataset
         dataset_kwargs = {
             "split": split,
             "trust_remote_code": trust_remote_code
@@ -338,17 +339,7 @@ def wrap_attention_modules(model: nn.Module, backend: str = "auto"):
             attr = parts[-1]
             adapter = NeoXFlashAttentionAdapter(module, backend=backend)
             setattr(parent, attr, adapter)
-
-    # 拼接并 tokenize
-    concatenated = "\n\n".join(texts)
-    encodings = tokenizer(concatenated, return_tensors="pt")
-    input_ids = encodings.input_ids
-    
-    # 限制 token 数
-    if max_eval_tokens is not None and max_eval_tokens > 0:
-        input_ids = input_ids[:, :max_eval_tokens]
-    
-    return input_ids
+    return model
 
 
 def compute_perplexity(
