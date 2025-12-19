@@ -414,15 +414,17 @@ class NeoXFlashAttentionAdapter(nn.Module):
         # SDPA expects [bsz, num_heads, q_len, head_size]
         # Our Q/K/V are currently [bsz, num_heads, seq_len, head_size]
         
-        # Create causal mask if needed (SDPA handles is_causal=True for training, but here we might have cache)
-        # If using cache (inference), we attend to all past + current. 
-        # For the new query tokens, they attend to all previous tokens and themselves (causal).
-        # Since we are usually decoding 1 token at a time or prefilling, we can use is_causal=True if q_len > 1 and no mask provided.
-        # But with cache, it's safer to provide explicit mask or rely on SDPA's behavior with dropout=0.
+        # Ensure dimensions match for SDPA
+        # Usually they do, but if q_len is different from k_len (e.g. cross attn or cache mismatch), we need to be careful.
+        # Here we concatenated past_key/value to key/value, so key/value seq_len >= query seq_len
+        # F.scaled_dot_product_attention handles this (Q: [B, H, Lq, D], K, V: [B, H, Lk, D])
+        # BUT, if head_size mismatch occurs (e.g. some broadcast issue), we check.
         
-        # For inference with cache, q_len is usually 1. is_causal doesn't matter much for 1 token.
-        # For prefill, q_len > 1.
-        
+        # Explicit check for head_size match (last dimension)
+        if query.shape[-1] != key.shape[-1]:
+             # This shouldn't happen with standard RoPE/Projection unless something weird happened
+             raise ValueError(f"Head size mismatch: Query {query.shape}, Key {key.shape}")
+
         # Context manager for SDPA
         ctx_manager = sdp_kernel(enable_flash=True, enable_math=True, enable_mem_efficient=False)
         
@@ -716,9 +718,16 @@ def _compute_streaming_decode_perplexity(
         end_evt.record()
         torch.cuda.synchronize()
         total_time = start_evt.elapsed_time(end_evt) / 1000.0
-        prefill_time = start_evt.elapsed_time(prefill_end_evt) / 1000.0
+        # Check if prefill event was recorded (might not be if loop was empty or skipped)
+        try:
+             prefill_time = start_evt.elapsed_time(prefill_end_evt) / 1000.0
+        except RuntimeError:
+             prefill_time = 0.0
         if total_tokens > 0:
-            first_token_time = first_start_evt.elapsed_time(first_end_evt) / 1000.0
+            try:
+                first_token_time = first_start_evt.elapsed_time(first_end_evt) / 1000.0
+            except RuntimeError:
+                 first_token_time = 0.0
     else:
         total_time = time.perf_counter() - total_start
     ppl = torch.exp(torch.tensor(total_nll / total_tokens))
