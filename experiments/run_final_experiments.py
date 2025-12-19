@@ -49,10 +49,12 @@ class ExperimentRunner:
         output_dir: Path = Path("results/final"),
         skip_existing: bool = True,
         device: Optional[str] = None,
+        attn_backend_list: Optional[List[str]] = None,
     ):
         self.model_name = model_name
         self.output_dir = output_dir
         self.skip_existing = skip_existing
+        self.attn_backend_list = attn_backend_list or ["math", "flash"]
         
         # 设置设备
         if device is None:
@@ -76,6 +78,24 @@ class ExperimentRunner:
         self.model = None
         self.tokenizer = None
         self.datasets = {}
+        self.current_backend = None
+    
+    def _set_backend(self, backend: str):
+        if self.model is None:
+            return
+        if backend == self.current_backend:
+            return
+        try:
+            from eval_utils import wrap_attention_modules
+            if self.current_backend is None:
+                wrap_attention_modules(self.model, backend=backend)
+            else:
+                for name, module in self.model.named_modules():
+                    if module.__class__.__name__ == "NeoXFlashAttentionAdapter":
+                        module.backend = backend
+            self.current_backend = backend
+        except Exception as e:
+            self.log(f"设置后端失败: {str(e)}", "ERROR")
     
     def log(self, message: str, level: str = "INFO"):
         """打印日志"""
@@ -214,14 +234,13 @@ class ExperimentRunner:
         self.log("开始主实验")
         self.log("="*60)
         
-        experiments = [
+        experiments: List[Dict[str, Any]] = [
             {
                 "name": "WikiText-103",
                 "dataset_name": "wikitext",
                 "dataset_config": "wikitext-103-v1",
                 "max_samples": 64,
                 "max_eval_tokens": 4096,
-                "output": self.output_dir / "wikitext_main.json",
             },
             {
                 "name": "PG19",
@@ -229,86 +248,75 @@ class ExperimentRunner:
                 "dataset_config": None,
                 "max_samples": 1,
                 "max_eval_tokens": 8192,
-                "output": self.output_dir / "pg19_main.json",
             },
         ]
         
         for exp in experiments:
             self.total_experiments += 1
-            
-            if self.experiment_exists(exp["output"]):
-                self.log(f"跳过已完成的实验: {exp['name']}")
-                self.skipped_experiments += 1
-                continue
-            
-            try:
-                self.log(f"运行实验: {exp['name']}")
-                
-                # 运行基线
-                self.log(f"  评估基线...")
-                baseline_ppl, baseline_time, baseline_prefill = self.run_baseline_experiment(
-                    dataset_name=exp["dataset_name"],
-                    dataset_config=exp["dataset_config"],
-                    max_samples=exp["max_samples"],
-                    max_eval_tokens=exp["max_eval_tokens"],
-                    max_cache_size=4 + 1024,
-                )
-                self.log(f"  基线 PPL: {baseline_ppl:.2f}, Runtime: {baseline_time:.3f}s")
-                
-                # 运行StreamingLLM
-                self.log(f"  评估 StreamingLLM...")
-                streaming_ppl, streaming_time, streaming_prefill, compression = \
-                    self.run_streaming_experiment(
+            for backend in self.attn_backend_list:
+                output = self.output_dir / f"{exp['dataset_name']}_main_backend-{backend}.json"
+                if self.experiment_exists(output):
+                    self.log(f"跳过已完成的实验: {exp['name']} ({backend})")
+                    self.skipped_experiments += 1
+                    continue
+                try:
+                    self._set_backend(backend)
+                    self.log(f"运行实验: {exp['name']} ({backend})")
+                    baseline_ppl, baseline_time, baseline_prefill = self.run_baseline_experiment(
                         dataset_name=exp["dataset_name"],
                         dataset_config=exp["dataset_config"],
                         max_samples=exp["max_samples"],
                         max_eval_tokens=exp["max_eval_tokens"],
-                        n_sink=4,
-                        window_size=1024,
+                        max_cache_size=4 + 1024,
                     )
-                self.log(f"  StreamingLLM PPL: {streaming_ppl:.2f}, Runtime: {streaming_time:.3f}s")
-                
-                # 计算指标
-                speedup = baseline_time / streaming_time if streaming_time > 0 else 0
-                ppl_increase = ((streaming_ppl - baseline_ppl) / baseline_ppl) * 100
-                
-                # 保存结果
-                result = {
-                    "experiment": exp["name"],
-                    "model": self.model_name,
-                    "dataset": f"{exp['dataset_name']}:{exp['dataset_config']}",
-                    "max_samples": exp["max_samples"],
-                    "max_eval_tokens": exp["max_eval_tokens"],
-                    "streaming_llm": {
-                        "n_sink": 4,
-                        "window_size": 1024,
-                        "max_cache_size": 4 + 1024,
-                    },
-                    "baseline": {
-                        "perplexity": baseline_ppl,
-                        "runtime_sec": baseline_time,
-                        "prefill_sec": baseline_prefill,
-                    },
-                    "streaming": {
-                        "perplexity": streaming_ppl,
-                        "runtime_sec": streaming_time,
-                        "prefill_sec": streaming_prefill,
-                    },
-                    "metrics": {
-                        "speedup": speedup,
-                        "compression_ratio": compression,
-                        "ppl_increase_percent": ppl_increase,
-                    },
-                    "timestamp": datetime.now().isoformat(),
-                }
-                
-                self.save_result(result, exp["output"])
-                self.completed_experiments += 1
-                self.log(f"✓ 实验完成: {exp['name']} (加速比: {speedup:.2f}x)")
-                
-            except Exception as e:
-                self.log(f"✗ 实验失败: {exp['name']} - {str(e)}", "ERROR")
-                self.failed_experiments += 1
+                    self.log(f"  基线 PPL: {baseline_ppl:.2f}, Runtime: {baseline_time:.3f}s")
+                    streaming_ppl, streaming_time, streaming_prefill, compression = \
+                        self.run_streaming_experiment(
+                            dataset_name=exp["dataset_name"],
+                            dataset_config=exp["dataset_config"],
+                            max_samples=exp["max_samples"],
+                            max_eval_tokens=exp["max_eval_tokens"],
+                            n_sink=4,
+                            window_size=1024,
+                        )
+                    self.log(f"  StreamingLLM PPL: {streaming_ppl:.2f}, Runtime: {streaming_time:.3f}s")
+                    speedup = baseline_time / streaming_time if streaming_time > 0 else 0
+                    ppl_increase = ((streaming_ppl - baseline_ppl) / baseline_ppl) * 100
+                    result = {
+                        "experiment": exp["name"],
+                        "model": self.model_name,
+                        "dataset": f"{exp['dataset_name']}:{exp['dataset_config']}",
+                        "backend": backend,
+                        "max_samples": exp["max_samples"],
+                        "max_eval_tokens": exp["max_eval_tokens"],
+                        "streaming_llm": {
+                            "n_sink": 4,
+                            "window_size": 1024,
+                            "max_cache_size": 4 + 1024,
+                        },
+                        "baseline": {
+                            "perplexity": baseline_ppl,
+                            "runtime_sec": baseline_time,
+                            "prefill_sec": baseline_prefill,
+                        },
+                        "streaming": {
+                            "perplexity": streaming_ppl,
+                            "runtime_sec": streaming_time,
+                            "prefill_sec": streaming_prefill,
+                        },
+                        "metrics": {
+                            "speedup": speedup,
+                            "compression_ratio": compression,
+                            "ppl_increase_percent": ppl_increase,
+                        },
+                        "timestamp": datetime.now().isoformat(),
+                    }
+                    self.save_result(result, output)
+                    self.completed_experiments += 1
+                    self.log(f"✓ 实验完成: {exp['name']} ({backend}) (加速比: {speedup:.2f}x)")
+                except Exception as e:
+                    self.log(f"✗ 实验失败: {exp['name']} ({backend}) - {str(e)}", "ERROR")
+                    self.failed_experiments += 1
     
     def run_ablation_window_size(self):
         """运行 window_size 消融实验"""
@@ -316,64 +324,55 @@ class ExperimentRunner:
         self.log("开始 Window Size 消融实验")
         self.log("="*60)
         
-        output_path = self.output_dir / "ablation_window_size.json"
-        
-        if self.experiment_exists(output_path):
-            self.log("跳过已完成的 Window Size 消融实验")
-            self.skipped_experiments += 1
-            return
-        
-        self.total_experiments += 1
-        
-        try:
-            window_sizes = [128, 256, 512, 1024, 2048, 4096]
-            n_sink = 4
-            results = []
-            
-            for window_size in window_sizes:
-                self.log(f"测试 window_size={window_size}")
-                
-                ppl, runtime, prefill, compression = self.run_streaming_experiment(
-                    dataset_name="wikitext",
-                    dataset_config="wikitext-103-v1",
-                    max_samples=64,
-                    max_eval_tokens=4096,
-                    n_sink=n_sink,
-                    window_size=window_size,
-                )
-                
-                result = {
-                    "window_size": window_size,
-                    "n_sink": n_sink,
-                    "max_cache_size": n_sink + window_size,
-                    "perplexity": ppl,
-                    "runtime_sec": runtime,
-                    "prefill_sec": prefill,
-                    "compression_ratio": compression,
+        for backend in self.attn_backend_list:
+            output_path = self.output_dir / f"ablation_window_size_backend-{backend}.json"
+            if self.experiment_exists(output_path):
+                self.log(f"跳过已完成的 Window Size 消融实验 ({backend})")
+                self.skipped_experiments += 1
+                continue
+            self.total_experiments += 1
+            try:
+                self._set_backend(backend)
+                window_sizes = [128, 256, 512, 1024, 2048, 4096]
+                n_sink = 4
+                results = []
+                for window_size in window_sizes:
+                    self.log(f"测试 window_size={window_size} ({backend})")
+                    ppl, runtime, prefill, compression = self.run_streaming_experiment(
+                        dataset_name="wikitext",
+                        dataset_config="wikitext-103-v1",
+                        max_samples=64,
+                        max_eval_tokens=4096,
+                        n_sink=n_sink,
+                        window_size=window_size,
+                    )
+                    result = {
+                        "backend": backend,
+                        "window_size": window_size,
+                        "n_sink": n_sink,
+                        "max_cache_size": n_sink + window_size,
+                        "perplexity": ppl,
+                        "runtime_sec": runtime,
+                        "prefill_sec": prefill,
+                        "compression_ratio": compression,
+                    }
+                    results.append(result)
+                    self.log(f"  PPL: {ppl:.2f}, Runtime: {runtime:.3f}s, Compression: {compression:.2%}")
+                output_data = {
+                    "experiment": "Window Size Ablation",
+                    "model": self.model_name,
+                    "dataset": "wikitext:wikitext-103-v1",
+                    "ablation_type": "window_size",
+                    "fixed_n_sink": n_sink,
+                    "results": results,
+                    "timestamp": datetime.now().isoformat(),
                 }
-                results.append(result)
-                
-                self.log(f"  PPL: {ppl:.2f}, Runtime: {runtime:.3f}s, "
-                        f"Compression: {compression:.2%}")
-            
-            # 保存结果
-            output_data = {
-                "experiment": "Window Size Ablation",
-                "model": self.model_name,
-                "dataset": "wikitext:wikitext-103-v1",
-                "ablation_type": "window_size",
-                "fixed_n_sink": n_sink,
-                "results": results,
-                "timestamp": datetime.now().isoformat(),
-            }
-            
-            self.save_result(output_data, output_path)
-            self.completed_experiments += 1
-            self.log("✓ Window Size 消融实验完成")
-            
-        except Exception as e:
-            self.log(f"✗ Window Size 消融实验失败: {str(e)}", "ERROR")
-            self.failed_experiments += 1
+                self.save_result(output_data, output_path)
+                self.completed_experiments += 1
+                self.log(f"✓ Window Size 消融实验完成 ({backend})")
+            except Exception as e:
+                self.log(f"✗ Window Size 消融实验失败 ({backend}): {str(e)}", "ERROR")
+                self.failed_experiments += 1
     
     def run_ablation_n_sink(self):
         """运行 n_sink 消融实验"""
@@ -381,64 +380,55 @@ class ExperimentRunner:
         self.log("开始 N_sink 消融实验")
         self.log("="*60)
         
-        output_path = self.output_dir / "ablation_n_sink.json"
-        
-        if self.experiment_exists(output_path):
-            self.log("跳过已完成的 N_sink 消融实验")
-            self.skipped_experiments += 1
-            return
-        
-        self.total_experiments += 1
-        
-        try:
-            n_sinks = [0, 1, 2, 4, 8, 16]
-            window_size = 1024
-            results = []
-            
-            for n_sink in n_sinks:
-                self.log(f"测试 n_sink={n_sink}")
-                
-                ppl, runtime, prefill, compression = self.run_streaming_experiment(
-                    dataset_name="wikitext",
-                    dataset_config="wikitext-103-v1",
-                    max_samples=64,
-                    max_eval_tokens=4096,
-                    n_sink=n_sink,
-                    window_size=window_size,
-                )
-                
-                result = {
-                    "n_sink": n_sink,
-                    "window_size": window_size,
-                    "max_cache_size": n_sink + window_size,
-                    "perplexity": ppl,
-                    "runtime_sec": runtime,
-                    "prefill_sec": prefill,
-                    "compression_ratio": compression,
+        for backend in self.attn_backend_list:
+            output_path = self.output_dir / f"ablation_n_sink_backend-{backend}.json"
+            if self.experiment_exists(output_path):
+                self.log(f"跳过已完成的 N_sink 消融实验 ({backend})")
+                self.skipped_experiments += 1
+                continue
+            self.total_experiments += 1
+            try:
+                self._set_backend(backend)
+                n_sinks = [0, 1, 2, 4, 8, 16]
+                window_size = 1024
+                results = []
+                for n_sink in n_sinks:
+                    self.log(f"测试 n_sink={n_sink} ({backend})")
+                    ppl, runtime, prefill, compression = self.run_streaming_experiment(
+                        dataset_name="wikitext",
+                        dataset_config="wikitext-103-v1",
+                        max_samples=64,
+                        max_eval_tokens=4096,
+                        n_sink=n_sink,
+                        window_size=window_size,
+                    )
+                    result = {
+                        "backend": backend,
+                        "n_sink": n_sink,
+                        "window_size": window_size,
+                        "max_cache_size": n_sink + window_size,
+                        "perplexity": ppl,
+                        "runtime_sec": runtime,
+                        "prefill_sec": prefill,
+                        "compression_ratio": compression,
+                    }
+                    results.append(result)
+                    self.log(f"  PPL: {ppl:.2f}, Runtime: {runtime:.3f}s, Compression: {compression:.2%}")
+                output_data = {
+                    "experiment": "N_sink Ablation",
+                    "model": self.model_name,
+                    "dataset": "wikitext:wikitext-103-v1",
+                    "ablation_type": "n_sink",
+                    "fixed_window_size": window_size,
+                    "results": results,
+                    "timestamp": datetime.now().isoformat(),
                 }
-                results.append(result)
-                
-                self.log(f"  PPL: {ppl:.2f}, Runtime: {runtime:.3f}s, "
-                        f"Compression: {compression:.2%}")
-            
-            # 保存结果
-            output_data = {
-                "experiment": "N_sink Ablation",
-                "model": self.model_name,
-                "dataset": "wikitext:wikitext-103-v1",
-                "ablation_type": "n_sink",
-                "fixed_window_size": window_size,
-                "results": results,
-                "timestamp": datetime.now().isoformat(),
-            }
-            
-            self.save_result(output_data, output_path)
-            self.completed_experiments += 1
-            self.log("✓ N_sink 消融实验完成")
-            
-        except Exception as e:
-            self.log(f"✗ N_sink 消融实验失败: {str(e)}", "ERROR")
-            self.failed_experiments += 1
+                self.save_result(output_data, output_path)
+                self.completed_experiments += 1
+                self.log(f"✓ N_sink 消融实验完成 ({backend})")
+            except Exception as e:
+                self.log(f"✗ N_sink 消融实验失败 ({backend}): {str(e)}", "ERROR")
+                self.failed_experiments += 1
     
     def estimate_time(self) -> str:
         """估算剩余时间"""

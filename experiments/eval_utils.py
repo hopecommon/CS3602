@@ -18,6 +18,8 @@ import torch.nn.functional as F
 from torch import Tensor
 from datasets import load_dataset
 from transformers import AutoTokenizer
+from torch.backends.cuda import sdp_kernel
+import torch.nn as nn
 
 
 def _load_json_entries(path: Path) -> list[dict]:
@@ -258,6 +260,85 @@ def load_tokenized_dataset(
     if not texts:
         raise ValueError(f"No non-empty rows found for dataset {dataset_name}")
     
+def check_sdpa_flash_available(dtype=torch.bfloat16):
+    if not torch.cuda.is_available():
+        return {"flash_enabled": False, "reason": "cuda_unavailable"}
+    try:
+        enabled = torch.backends.cuda.flash_sdp_enabled()
+    except Exception:
+        enabled = False
+    result = {"flash_enabled": bool(enabled)}
+    if enabled:
+        try:
+            q = torch.randn(1, 4, 8, 64, device="cuda", dtype=dtype)
+            k = torch.randn(1, 4, 8, 64, device="cuda", dtype=dtype)
+            v = torch.randn(1, 4, 8, 64, device="cuda", dtype=dtype)
+            with sdp_kernel(enable_flash=True, enable_math=False, enable_mem_efficient=False):
+                _ = F.scaled_dot_product_attention(q, k, v, attn_mask=None, is_causal=True)
+            result["smoke_test"] = True
+        except Exception as e:
+            result["smoke_test"] = False
+            result["error"] = str(e)
+    return result
+
+class NeoXFlashAttentionAdapter(nn.Module):
+    def __init__(self, original_module: nn.Module, backend: str = "auto"):
+        super().__init__()
+        self.original = original_module
+        self.backend = backend
+
+    def forward(
+        self,
+        hidden_states,
+        attention_mask=None,
+        head_mask=None,
+        layer_past=None,
+        use_cache=False,
+        output_attentions=False,
+        position_ids=None,
+        **kwargs,
+    ):
+        mode = self.backend
+        env = os.environ.get("FLASH_SDPA", None)
+        if env == "1":
+            mode = "flash"
+        elif env == "0":
+            mode = "math"
+        if mode == "flash":
+            ctx = sdp_kernel(enable_flash=True, enable_math=True, enable_mem_efficient=False)
+        elif mode == "math":
+            ctx = sdp_kernel(enable_flash=False, enable_math=True, enable_mem_efficient=False)
+        else:
+            info = check_sdpa_flash_available(dtype=torch.bfloat16)
+            if info.get("flash_enabled") and info.get("smoke_test", False):
+                ctx = sdp_kernel(enable_flash=True, enable_math=True, enable_mem_efficient=False)
+            else:
+                ctx = sdp_kernel(enable_flash=False, enable_math=True, enable_mem_efficient=False)
+        with ctx:
+            return self.original(
+                hidden_states=hidden_states,
+                attention_mask=attention_mask,
+                head_mask=head_mask,
+                layer_past=layer_past,
+                use_cache=use_cache,
+                output_attentions=output_attentions,
+                position_ids=position_ids,
+                **kwargs,
+            )
+
+def wrap_attention_modules(model: nn.Module, backend: str = "auto"):
+    for name, module in model.named_modules():
+        has_qkv = hasattr(module, "query_key_value") and isinstance(getattr(module, "query_key_value"), nn.Linear)
+        has_out = hasattr(module, "dense") and isinstance(getattr(module, "dense"), nn.Linear)
+        if has_qkv and has_out:
+            parent = model
+            parts = name.split(".")
+            for p in parts[:-1]:
+                parent = getattr(parent, p)
+            attr = parts[-1]
+            adapter = NeoXFlashAttentionAdapter(module, backend=backend)
+            setattr(parent, attr, adapter)
+
     # 拼接并 tokenize
     concatenated = "\n\n".join(texts)
     encodings = tokenizer(concatenated, return_tensors="pt")

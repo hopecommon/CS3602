@@ -46,6 +46,23 @@ def load_results(result_dir: Path) -> Dict[str, Any]:
     if ablation_nsink_file.exists():
         results['ablation_nsink'] = json.loads(ablation_nsink_file.read_text())
     
+    # Backend-specific files
+    backend_results = {"main": {}, "ablation_window": {}, "ablation_nsink": {}}
+    for path in result_dir.glob("*_backend-*.json"):
+        name = path.stem
+        if "wikitext_main_backend-" in name or "pg19_main_backend-" in name:
+            data = json.loads(path.read_text())
+            ds = "wikitext" if "wikitext" in name else "pg19"
+            backend = name.split("backend-")[-1]
+            backend_results["main"].setdefault(ds, {})[backend] = data
+        elif "ablation_window_size_backend-" in name:
+            backend = name.split("backend-")[-1]
+            backend_results["ablation_window"][backend] = json.loads(path.read_text())
+        elif "ablation_n_sink_backend-" in name:
+            backend = name.split("backend-")[-1]
+            backend_results["ablation_nsink"][backend] = json.loads(path.read_text())
+    results["backend"] = backend_results
+    
     return results
 
 
@@ -308,6 +325,59 @@ def plot_summary_table(results: Dict[str, Any], output_dir: Path):
     print(f"✓ Results summary table saved: {output_file}")
     plt.close()
 
+def plot_backend_comparison(results: Dict[str, Any], output_dir: Path):
+    backend = results.get("backend", {})
+    main = backend.get("main", {})
+    if not main:
+        return
+    datasets = [ds for ds in ["wikitext", "pg19"] if ds in main]
+    if not datasets:
+        return
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+    fig.suptitle("Backend Comparison (math vs flash)", fontsize=16, fontweight="bold")
+    x = np.arange(len(datasets))
+    width = 0.35
+    runtimes_math = []
+    runtimes_flash = []
+    ppls_math = []
+    ppls_flash = []
+    for ds in datasets:
+        math_data = main[ds].get("math")
+        flash_data = main[ds].get("flash")
+        if math_data:
+            runtimes_math.append(math_data["streaming"]["runtime_sec"])
+            ppls_math.append(math_data["streaming"]["perplexity"])
+        else:
+            runtimes_math.append(0.0)
+            ppls_math.append(0.0)
+        if flash_data:
+            runtimes_flash.append(flash_data["streaming"]["runtime_sec"])
+            ppls_flash.append(flash_data["streaming"]["perplexity"])
+        else:
+            runtimes_flash.append(0.0)
+            ppls_flash.append(0.0)
+    ax1 = axes[0]
+    ax1.bar(x - width/2, runtimes_math, width, label="StreamingLLM (math)", color="#5555aa", alpha=0.85)
+    ax1.bar(x + width/2, runtimes_flash, width, label="StreamingLLM (flash)", color="#aa5555", alpha=0.85)
+    ax1.set_title("Runtime (s)", fontweight="bold")
+    ax1.set_xticks(x)
+    ax1.set_xticklabels([ds.upper() for ds in datasets])
+    ax1.legend()
+    ax1.grid(axis="y", alpha=0.3)
+    ax2 = axes[1]
+    ax2.bar(x - width/2, ppls_math, width, label="StreamingLLM (math)", color="#5555aa", alpha=0.85)
+    ax2.bar(x + width/2, ppls_flash, width, label="StreamingLLM (flash)", color="#aa5555", alpha=0.85)
+    ax2.set_title("Perplexity", fontweight="bold")
+    ax2.set_xticks(x)
+    ax2.set_xticklabels([ds.upper() for ds in datasets])
+    ax2.legend()
+    ax2.grid(axis="y", alpha=0.3)
+    plt.tight_layout()
+    output_file = output_dir / "backend_math_vs_flash.png"
+    plt.savefig(output_file, dpi=300, bbox_inches="tight")
+    print(f"✓ Backend comparison plot saved: {output_file}")
+    plt.close()
+
 
 def main():
     parser = argparse.ArgumentParser(description="Plot StreamingLLM experimental results")
@@ -351,6 +421,7 @@ def main():
     plot_ablation_window_size(results, args.output_dir)
     plot_ablation_n_sink(results, args.output_dir)
     plot_summary_table(results, args.output_dir)
+    plot_backend_comparison(results, args.output_dir)
     
     print(f"\n{'='*60}")
     print(f"All plots generated successfully!")
@@ -360,6 +431,7 @@ def main():
     print(f"  - ablation_window_size.png: Window size ablation")
     print(f"  - ablation_n_sink.png: N_sink ablation")
     print(f"  - results_summary_table.png: Results summary table")
+    print(f"  - backend_math_vs_flash.png: Backend comparison")
     print(f"{'='*60}\n")
     
     return 0
