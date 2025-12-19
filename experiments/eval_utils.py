@@ -19,6 +19,7 @@ from torch import Tensor
 from transformers import AutoTokenizer
 from torch.backends.cuda import sdp_kernel
 import torch.nn as nn
+from tqdm import tqdm
 
 
 def _load_json_entries(path: Path) -> list[dict]:
@@ -551,7 +552,7 @@ def _compute_streaming_decode_perplexity(
                 total_tokens += labels.numel()
 
             past_key_values = outputs.past_key_values
-            streaming_wrapper.update(past_key_values)
+            past_key_values = streaming_wrapper.update(past_key_values)
             if use_cuda_timing:
                 prefill_end_evt.record()
 
@@ -561,7 +562,7 @@ def _compute_streaming_decode_perplexity(
                 prefill_time = time.perf_counter() - prefill_start
                 first_token_recorded = False
 
-            for pos in range(prefill_len - 1, seq_len - 1):
+            for pos in tqdm(range(prefill_len - 1, seq_len - 1), desc="Decoding"):
                 current_input = encoded_dataset[:, pos:pos + 1]
                 target = encoded_dataset[:, pos + 1]
 
@@ -585,7 +586,7 @@ def _compute_streaming_decode_perplexity(
                 total_nll += loss.item()
                 total_tokens += target.numel()
                 past_key_values = outputs.past_key_values
-                streaming_wrapper.update(past_key_values)
+                past_key_values = streaming_wrapper.update(past_key_values)
 
                 if not first_token_recorded:
                     first_token_recorded = True

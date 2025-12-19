@@ -26,6 +26,22 @@ class LayerInfo:
     inv_freq: Optional[torch.Tensor]
 
 
+@dataclass
+class TupleLayerWrapper:
+    """Helper to wrap legacy tuple (key, value) as an object with .keys and .values"""
+    keys: torch.Tensor
+    values: torch.Tensor
+
+
+class LegacyCacheWrapper:
+    """Helper to wrap legacy tuple of tuples as a Cache-like object"""
+    def __init__(self, past_key_values: tuple):
+        self.layers = [TupleLayerWrapper(k, v) for k, v in past_key_values]
+
+    def to_tuple(self) -> tuple:
+        return tuple((l.keys, l.values) for l in self.layers)
+
+
 class StreamingLLMWrapper:
     """
     包装 HuggingFace 模型,提供 StreamingLLM 所需的 KV cache 压缩功能
@@ -90,25 +106,42 @@ class StreamingLLMWrapper:
     # ---------------------------------------------------------------------
     # Core logic
     # ---------------------------------------------------------------------
-    def update(self, past_key_values: Cache | None):
+    def update(self, past_key_values: Cache | tuple | None):
         """
         对当前的 past_key_values 执行 StreamingLLM 压缩,并重新计算 RoPE。
+        
+        Args:
+            past_key_values: transformers Cache object or legacy tuple
+            
+        Returns:
+            The updated past_key_values (same type as input). 
+            If input was a tuple, returns a NEW tuple with updated tensors.
+            If input was a Cache object, returns it (modified in-place).
         """
         if not self._enabled or past_key_values is None:
-            return
+            return past_key_values
 
-        if not isinstance(past_key_values, Cache):
-            raise TypeError(
-                "StreamingLLMWrapper 仅支持新的 Cache API, "
-                "请使用 transformers>=4.36 的模型"
-            )
+        # Handle legacy tuple format
+        is_legacy = isinstance(past_key_values, tuple)
+        if is_legacy:
+            cache_obj = LegacyCacheWrapper(past_key_values)
+        elif isinstance(past_key_values, Cache):
+            cache_obj = past_key_values
+        else:
+            # Try to handle as generic object if it has .layers or assume it's unsupported
+            if not hasattr(past_key_values, "layers"):
+                 raise TypeError(
+                    f"StreamingLLMWrapper received unsupported cache type: {type(past_key_values)}. "
+                    "Expected transformers.Cache or tuple."
+                )
+            cache_obj = past_key_values
 
-        if len(past_key_values.layers) == 0:
-            return
+        if len(cache_obj.layers) == 0:
+            return past_key_values
 
-        first_layer = past_key_values.layers[0]
+        first_layer = cache_obj.layers[0]
         if first_layer.keys.numel() == 0:
-            return
+            return past_key_values
 
         device = first_layer.keys.device
         batch_size = first_layer.keys.shape[0]
@@ -117,9 +150,9 @@ class StreamingLLMWrapper:
         cache_limit = self._cache_capacity
         overflow = seq_len - cache_limit
         if overflow <= 0:
-            return
+            return past_key_values
         if overflow < self.compress_every:
-            return
+            return past_key_values
 
         indices = None
         slice_info = None
@@ -130,11 +163,11 @@ class StreamingLLMWrapper:
         else:
             indices = self.cache.get_keep_indices(seq_len, device)
             if indices is None:
-                return
+                return past_key_values
             old_positions_1d = indices.to(dtype=torch.long)
             kept = int(old_positions_1d.numel())
 
-        for layer_idx, layer in enumerate(past_key_values.layers):
+        for layer_idx, layer in enumerate(cache_obj.layers):
             key_states = layer.keys
             value_states = layer.values
 
@@ -235,6 +268,10 @@ class StreamingLLMWrapper:
 
             layer.keys = compressed_key
             layer.values = compressed_value
+
+        if is_legacy:
+            return cache_obj.to_tuple()
+        return past_key_values
 
     def _slice_cache_tensor(
         self,
