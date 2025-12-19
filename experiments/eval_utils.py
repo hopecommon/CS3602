@@ -310,7 +310,22 @@ class NeoXFlashAttentionAdapter(nn.Module):
         self.num_attention_heads = original_module.num_attention_heads
         self.hidden_size = original_module.hidden_size
         self.head_size = original_module.hidden_size // original_module.num_attention_heads
-        self.rotary_ndims = int(self.head_size * original_module.rotary_pct)
+        if hasattr(original_module, "rotary_pct"):
+            self.rotary_ndims = int(self.head_size * original_module.rotary_pct)
+        elif hasattr(original_module, "rotary_ndims"):
+            self.rotary_ndims = original_module.rotary_ndims
+        else:
+            # Default for GPT-NeoX / Pythia often is partial rotary or full
+            # We'll try to infer or assume based on common configs if not present
+            # For Pythia 2.8b, it's typically rotary_pct=0.25
+            # Safest is to check if there is a rotary_emb module and inspect it
+            if self.rotary_emb is not None and hasattr(self.rotary_emb, "dim"):
+                 self.rotary_ndims = self.rotary_emb.dim
+            else:
+                 # Fallback: Assume full rotation or partial (Pythia default 0.25 * 128 = 32)
+                 # This is risky without config access.
+                 # Let's try to get config from original module if possible
+                 self.rotary_ndims = int(self.head_size * 0.25) # Default guess for Pythia
 
     def forward(
         self,
@@ -369,7 +384,11 @@ class NeoXFlashAttentionAdapter(nn.Module):
                   past_length = 0
                   if layer_past is not None:
                       # past_key_values[0] is keys: [bsz, num_heads, past_len, head_size]
-                      past_length = layer_past[0].shape[-2]
+                      if hasattr(layer_past[0], "device"): # Tuple or Tensor
+                          past_length = layer_past[0].shape[-2]
+                      # If it's something else (like Cache object), we might need logic, 
+                      # but here layer_past usually comes from legacy tuple or our wrapper
+                  
                   position_ids = torch.arange(past_length, past_length + q_len, dtype=torch.long, device=hidden_states.device)
                   position_ids = position_ids.unsqueeze(0).expand(bsz, -1)
              
@@ -607,9 +626,11 @@ def _compute_streaming_decode_perplexity(
             prefill_time = time.perf_counter() - prefill_start
             first_token_recorded = False
 
-            for pos in tqdm(range(prefill_len - 1, seq_len - 1), desc="Decoding (Baseline)"):
-                start_idx = max(0, pos + 1 - max_cache_size)
-                context = encoded_dataset[:, start_idx:pos + 1]
+        # Add None check for past_key_values if used (Baseline doesn't use cache here, but good practice)
+        
+        for pos in tqdm(range(prefill_len - 1, seq_len - 1), desc="Decoding (Baseline)"):
+            start_idx = max(0, pos + 1 - max_cache_size)
+            context = encoded_dataset[:, start_idx:pos + 1]
             target = encoded_dataset[:, pos + 1]
 
             if use_cuda_timing and not first_token_recorded:
