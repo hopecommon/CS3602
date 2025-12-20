@@ -594,9 +594,18 @@ def _compute_streaming_decode_perplexity(
                 if use_cuda_timing and not first_token_recorded:
                     first_start_evt.record()
                 with torch.no_grad():
+                    cache_len = past_key_values[0][0].shape[2]   # [B, H, T, D]
+
+                    position_ids = torch.tensor(
+                        [[cache_len]],
+                        device=current_input.device,
+                        dtype=torch.long,
+                    )
+
                     outputs = model(
                         input_ids=current_input,
                         past_key_values=past_key_values,
+                        position_ids=position_ids,
                         use_cache=True,
                     )
                 if use_cuda_timing and not first_token_recorded:
