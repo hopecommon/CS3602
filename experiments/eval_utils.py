@@ -240,6 +240,10 @@ def load_tokenized_dataset(
                 # 随机选择一条 (固定种子确保可复现)
                 random_one = random.choice(buffer)
                 texts = [random_one.get(text_column, "")]
+                if not texts[0] or not isinstance(texts[0], str):
+                    # Fallback to 'text' column or check content
+                    texts = [random_one.get("text", "")]
+                
                 print(f"✓ 已从前 {N} 条中随机选择 1 条样本 (种子=42)")
                 print(f"  样本长度: {len(texts[0])} 字符")
                 
@@ -412,6 +416,13 @@ class NeoXFlashAttentionAdapter(nn.Module):
                   position_ids = position_ids.unsqueeze(0).expand(bsz, -1)
              
              cos, sin = rotary_emb(value, seq_len=position_ids.max() + 1)
+             
+             # Check dtype of cos/sin vs query/key
+             # Sometimes rotary_emb returns float32, but query/key are float16/bfloat16
+             if cos.dtype != query.dtype:
+                 cos = cos.to(query.dtype)
+                 sin = sin.to(query.dtype)
+             
              # Pythia/NeoX RoPE usually applies to query and key
              # Need to match dimensions for apply_rotary_pos_emb
              # Standard implementation:
@@ -437,6 +448,13 @@ class NeoXFlashAttentionAdapter(nn.Module):
                  key = torch.cat((k_rot, k_pass), dim=-1)
              else:
                  query, key = apply_rotary_pos_emb(query, key, cos, sin, position_ids)
+
+             # CAST BACK TO ORIGINAL DTYPE
+             # apply_rotary_pos_emb might promote to float32, but SDPA requires all inputs to match
+             if query.dtype != value.dtype:
+                 query = query.to(value.dtype)
+             if key.dtype != value.dtype:
+                 key = key.to(value.dtype)
 
         # 3. KV Cache Management
         if layer_past is not None:
