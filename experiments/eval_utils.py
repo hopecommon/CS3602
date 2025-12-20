@@ -284,6 +284,14 @@ def load_tokenized_dataset(
     
     if not texts:
         raise ValueError(f"No non-empty rows found for dataset {dataset_name}")
+
+    concatenated = "\n\n".join(texts)
+    encodings = tokenizer(concatenated, return_tensors="pt")
+    input_ids = encodings.input_ids
+    if max_eval_tokens:
+        input_ids = input_ids[:, :max_eval_tokens]
+    print(f"  最终 token 数: {input_ids.shape[1]}")
+    return input_ids
     
 def check_sdpa_flash_available(dtype=torch.bfloat16):
     if not torch.cuda.is_available():

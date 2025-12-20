@@ -45,6 +45,7 @@ NC='\033[0m' # No Color
 
 # Python 解释器
 PYTHON="${PYTHON_BIN:-kvpress/.venv/bin/python}"
+ENABLE_SPECDEC="${ENABLE_SPECDEC:-0}"
 
 # 检查 Python 解释器
 if [ ! -f "$PYTHON" ]; then
@@ -223,6 +224,50 @@ run_experiment \
         --mode streaming \
         --baseline-results ${BASE_DEFAULT} \
         --output results/decoding/decoding_latency_nsink8.json"
+
+################################################################################
+# Speculative Decoding (可选)
+################################################################################
+
+if [ "$ENABLE_SPECDEC" = "1" ]; then
+    echo -e "${YELLOW}=== Speculative Decoding 实验 ===${NC}" | tee -a "$LOG_FILE"
+
+    SPEC_BASELINE="results/decoding/decoding_latency_spec_baseline.json"
+    DRAFT_MODEL="${DRAFT_MODEL_NAME:-EleutherAI/pythia-70m}"
+
+    run_experiment \
+        "SpecDec Baseline (full cache)" \
+        "$PYTHON experiments/eval_decoding_latency.py \
+            --cache-size 4096 \
+            --n-sink 4 \
+            --prompt-length 512 \
+            --num-tokens 2000 \
+            --warmup-tokens 200 \
+            --num-runs 3 \
+            --mode baseline \
+            --decoder speculative \
+            --draft-model-name ${DRAFT_MODEL} \
+            --draft-k 8 \
+            --temperature 0.0 \
+            --output ${SPEC_BASELINE}"
+
+    run_experiment \
+        "SpecDec Streaming (Cache=2048)" \
+        "$PYTHON experiments/eval_decoding_latency.py \
+            --cache-size 2048 \
+            --n-sink 4 \
+            --prompt-length 512 \
+            --num-tokens 2000 \
+            --warmup-tokens 200 \
+            --num-runs 3 \
+            --mode streaming \
+            --decoder speculative \
+            --draft-model-name ${DRAFT_MODEL} \
+            --draft-k 8 \
+            --temperature 0.0 \
+            --baseline-results ${SPEC_BASELINE} \
+            --output results/decoding/decoding_latency_spec_streaming.json"
+fi
 
 ################################################################################
 # 总结报告
