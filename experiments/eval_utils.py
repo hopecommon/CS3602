@@ -311,44 +311,6 @@ class NeoXFlashAttentionAdapter(nn.Module):
         super().__init__()
         self.original = original_module
         self.backend = backend
-        
-        # Extract components from original module
-        if hasattr(original_module, "query_key_value"):
-             self.query_key_value = original_module.query_key_value
-        else:
-             raise ValueError("NeoXFlashAttentionAdapter requires original_module to have query_key_value")
-             
-        if hasattr(original_module, "dense"):
-             self.dense = original_module.dense
-        else:
-             raise ValueError("NeoXFlashAttentionAdapter requires original_module to have dense")
-             
-        if hasattr(original_module, "rotary_emb"):
-             self.rotary_emb = original_module.rotary_emb
-        else:
-             # Try to find rotary embedding from parent model if not in module
-             # This is tricky without reference to model, so we assume standard NeoX structure
-             self.rotary_emb = None 
-
-        self.num_attention_heads = original_module.num_attention_heads
-        self.hidden_size = original_module.hidden_size
-        self.head_size = original_module.hidden_size // original_module.num_attention_heads
-        if hasattr(original_module, "rotary_pct"):
-            self.rotary_ndims = int(self.head_size * original_module.rotary_pct)
-        elif hasattr(original_module, "rotary_ndims"):
-            self.rotary_ndims = original_module.rotary_ndims
-        else:
-            # Default for GPT-NeoX / Pythia often is partial rotary or full
-            # We'll try to infer or assume based on common configs if not present
-            # For Pythia 2.8b, it's typically rotary_pct=0.25
-            # Safest is to check if there is a rotary_emb module and inspect it
-            if self.rotary_emb is not None and hasattr(self.rotary_emb, "dim"):
-                 self.rotary_ndims = self.rotary_emb.dim
-            else:
-                 # Fallback: Assume full rotation or partial (Pythia default 0.25 * 128 = 32)
-                 # This is risky without config access.
-                 # Let's try to get config from original module if possible
-                 self.rotary_ndims = int(self.head_size * 0.25) # Default guess for Pythia
 
     def forward(
         self,
@@ -367,10 +329,18 @@ class NeoXFlashAttentionAdapter(nn.Module):
             mode = "flash"
         elif env == "0":
             mode = "math"
-        
-        # Fallback to original implementation if not flash mode or not using SDPA
-        if mode != "flash" and mode != "auto":
-             return self.original(
+        if mode == "flash":
+            ctx = sdp_kernel(enable_flash=True, enable_math=True, enable_mem_efficient=False)
+        elif mode == "math":
+            ctx = sdp_kernel(enable_flash=False, enable_math=True, enable_mem_efficient=False)
+        else:
+            info = check_sdpa_flash_available(dtype=torch.bfloat16)
+            if info.get("flash_enabled") and info.get("smoke_test", False):
+                ctx = sdp_kernel(enable_flash=True, enable_math=True, enable_mem_efficient=False)
+            else:
+                ctx = sdp_kernel(enable_flash=False, enable_math=True, enable_mem_efficient=False)
+        with ctx:
+            return self.original(
                 hidden_states=hidden_states,
                 attention_mask=attention_mask,
                 head_mask=head_mask,
@@ -380,136 +350,6 @@ class NeoXFlashAttentionAdapter(nn.Module):
                 position_ids=position_ids,
                 **kwargs,
             )
-
-        # Flash/Auto mode implementation
-        bsz, q_len, _ = hidden_states.size()
-        
-        # 1. QKV Projection
-        qkv = self.query_key_value(hidden_states)
-        
-        # FIX: Pythia/GPT-NeoX uses Interleaved layout: [num_heads, 3, head_size]
-        # Not [3, num_heads, head_size] which would be Concatenated layout
-        qkv = qkv.view(bsz, q_len, self.num_attention_heads, 3, self.head_size)
-        
-        # Permute to [3, bsz, num_heads, q_len, head_size] for easy splitting
-        qkv = qkv.permute(3, 0, 2, 1, 4) 
-        query, key, value = qkv[0], qkv[1], qkv[2]
-        
-        # 2. RoPE (Manual implementation since we bypass original forward)
-        # Note: This relies on streaming_llm already handling position updates for cache
-        # If position_ids is None, infer from cache or sequence
-        if hasattr(self.original, "rotary_emb"):
-             rotary_emb = self.original.rotary_emb
-        elif self.rotary_emb:
-             rotary_emb = self.rotary_emb
-        else:
-             # Fallback: try to find it attached to self.original (some implementations)
-             rotary_emb = getattr(self.original, "rotary_emb", None)
-
-        if rotary_emb is not None:
-             if position_ids is None:
-                  # Infer position_ids
-                  past_length = 0
-                  if layer_past is not None:
-                      # past_key_values[0] is keys: [bsz, num_heads, past_len, head_size]
-                      if hasattr(layer_past[0], "device"): # Tuple or Tensor
-                          past_length = layer_past[0].shape[-2]
-                      # If it's something else (like Cache object), we might need logic, 
-                      # but here layer_past usually comes from legacy tuple or our wrapper
-                  
-                  position_ids = torch.arange(past_length, past_length + q_len, dtype=torch.long, device=hidden_states.device)
-                  position_ids = position_ids.unsqueeze(0).expand(bsz, -1)
-             
-             cos, sin = rotary_emb(value, seq_len=position_ids.max() + 1)
-             
-             # Check dtype of cos/sin vs query/key
-             # Sometimes rotary_emb returns float32, but query/key are float16/bfloat16
-             if cos.dtype != query.dtype:
-                 cos = cos.to(query.dtype)
-                 sin = sin.to(query.dtype)
-             
-             # Pythia/NeoX RoPE usually applies to query and key
-             # Need to match dimensions for apply_rotary_pos_emb
-             # Standard implementation:
-             from transformers.models.gpt_neox.modeling_gpt_neox import apply_rotary_pos_emb
-             
-             # IMPORTANT FIX: Ensure dimensions match for RoPE
-             # query/key: [bsz, num_heads, q_len, head_size]
-             # cos/sin: [q_len, rotary_dim] or [1, q_len, rotary_dim] depending on implementation
-             
-             # If partial rotary (e.g. Pythia 2.8B rotates 32 dims out of 128), we must split
-             rotary_dim = cos.shape[-1]
-             head_dim = query.shape[-1]
-             
-             if rotary_dim < head_dim:
-                 q_rot = query[..., :rotary_dim]
-                 q_pass = query[..., rotary_dim:]
-                 k_rot = key[..., :rotary_dim]
-                 k_pass = key[..., rotary_dim:]
-                 
-                 q_rot, k_rot = apply_rotary_pos_emb(q_rot, k_rot, cos, sin, position_ids)
-                 
-                 query = torch.cat((q_rot, q_pass), dim=-1)
-                 key = torch.cat((k_rot, k_pass), dim=-1)
-             else:
-                 query, key = apply_rotary_pos_emb(query, key, cos, sin, position_ids)
-
-             # CAST BACK TO ORIGINAL DTYPE
-             # apply_rotary_pos_emb might promote to float32, but SDPA requires all inputs to match
-             if query.dtype != value.dtype:
-                 query = query.to(value.dtype)
-             if key.dtype != value.dtype:
-                 key = key.to(value.dtype)
-
-        # 3. KV Cache Management
-        if layer_past is not None:
-            past_key, past_value = layer_past
-            key = torch.cat((past_key, key), dim=-2)
-            value = torch.cat((past_value, value), dim=-2)
-        
-        if use_cache:
-            present = (key, value)
-        else:
-            present = None
-
-        # 4. SDPA Call
-        # SDPA expects [bsz, num_heads, q_len, head_size]
-        # Our Q/K/V are currently [bsz, num_heads, seq_len, head_size]
-        
-        # Ensure dimensions match for SDPA
-        # Usually they do, but if q_len is different from k_len (e.g. cross attn or cache mismatch), we need to be careful.
-        # Here we concatenated past_key/value to key/value, so key/value seq_len >= query seq_len
-        # F.scaled_dot_product_attention handles this (Q: [B, H, Lq, D], K, V: [B, H, Lk, D])
-        # BUT, if head_size mismatch occurs (e.g. some broadcast issue), we check.
-        
-        # Explicit check for head_size match (last dimension)
-        if query.shape[-1] != key.shape[-1]:
-             # This shouldn't happen with standard RoPE/Projection unless something weird happened
-             raise ValueError(f"Head size mismatch: Query {query.shape}, Key {key.shape}")
-
-        # Context manager for SDPA
-        ctx_manager = sdp_kernel(enable_flash=True, enable_math=True, enable_mem_efficient=False)
-        
-        with ctx_manager:
-            attn_output = F.scaled_dot_product_attention(
-                query, 
-                key, 
-                value, 
-                attn_mask=None, 
-                dropout_p=0.0, 
-                is_causal=True if q_len > 1 else False
-            )
-        
-        # 5. Output Projection
-        attn_output = attn_output.transpose(1, 2).contiguous() # [bsz, q_len, num_heads, head_size]
-        attn_output = attn_output.view(bsz, q_len, self.hidden_size)
-        
-        output = self.dense(attn_output)
-        
-        if output_attentions:
-            return (output, present, None) # No attention weights from SDPA
-            
-        return (output, present)
 
 def wrap_attention_modules(model: nn.Module, backend: str = "auto"):
     for name, module in model.named_modules():
