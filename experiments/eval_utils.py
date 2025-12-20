@@ -1,18 +1,7 @@
 """
-评估工具函数（带 StreamingLLM Debug）
+评估工具函数
 
 提供通用的 PPL 评估、数据加载等功能
-
-Debug 使用方法（不改代码）：
-- Windows CMD:
-    set STREAMING_DEBUG=1
-    set STREAMING_DEBUG_EVERY=200
-- Linux/macOS:
-    STREAMING_DEBUG=1 STREAMING_DEBUG_EVERY=200 python ...
-
-说明：
-- STREAMING_DEBUG=1 时会输出关键节点信息（prefill 后、decode 每隔 N 步、每次 update 时 cache_len 变化等）
-- STREAMING_DEBUG_EVERY 控制输出频率（默认 200）
 """
 
 import time
@@ -31,12 +20,6 @@ from transformers import AutoTokenizer
 from torch.backends.cuda import sdp_kernel
 import torch.nn as nn
 from tqdm import tqdm
-
-
-def _dbg(msg: str):
-    """Debug print controlled by env var STREAMING_DEBUG=1."""
-    if os.environ.get("STREAMING_DEBUG", "0") == "1":
-        print(msg, flush=True)
 
 
 def _get_cache_len(pkv) -> int:
@@ -95,12 +78,6 @@ PG19_CACHE_DIR = Path("data/pg19")
 PG19_CACHE_FILE = PG19_CACHE_DIR / "sample.json"
 PG19_SAMPLES_PATTERN = PG19_CACHE_DIR / "long_context_*.json"
 
-# WikiText 本地缓存目录
-WIKITEXT_CACHE_DIR = Path("data/wikitext")
-WIKITEXT_CACHE_FILE = WIKITEXT_CACHE_DIR / "sample.json"
-WIKITEXT_SAMPLES_PATTERN = WIKITEXT_CACHE_DIR / "long_context_*.json"
-
-
 # Utility functions
 def _extract_length_from_name(path: Path) -> Optional[int]:
     match = re.search(r"long_context_(\d+)", path.name)
@@ -150,6 +127,12 @@ def _resolve_wikitext_sample_path() -> Optional[Path]:
     return candidates[0]
 
 
+# WikiText 本地缓存目录
+WIKITEXT_CACHE_DIR = Path("data/wikitext")
+WIKITEXT_CACHE_FILE = WIKITEXT_CACHE_DIR / "sample.json"
+WIKITEXT_SAMPLES_PATTERN = WIKITEXT_CACHE_DIR / "long_context_*.json"
+
+
 def load_tokenized_dataset(
     dataset_name: str,
     dataset_config: Optional[str],
@@ -163,6 +146,17 @@ def load_tokenized_dataset(
 ) -> Tensor:
     """
     加载并 tokenize 数据集
+
+    Args:
+        dataset_name: 数据集名称 (如 'wikitext', 'pg19')
+        dataset_config: 数据集配置 (如 'wikitext-103-v1')
+        split: 数据集分割 (如 'test')
+        text_column: 文本列名 (如 'text')
+        max_samples: 最大样本数
+        tokenizer: tokenizer 实例
+        max_eval_tokens: 最大评估 token 数
+        trust_remote_code: 是否信任远程代码
+        use_streaming: 是否使用流式加载
 
     Returns:
         input_ids: tokenized 输入 [1, seq_len]
@@ -209,6 +203,8 @@ def load_tokenized_dataset(
                 raise ValueError(f"{sample_path} 中没有可用文本")
             texts = [text]
         else:
+
+            # 检查本地缓存
             if PG19_CACHE_FILE.exists():
                 print(f"✓ 使用本地缓存: {PG19_CACHE_FILE}")
                 with open(PG19_CACHE_FILE, "r", encoding="utf-8") as f:
@@ -217,7 +213,9 @@ def load_tokenized_dataset(
                 print(f"  已加载缓存数据 (长度: {len(texts[0])} 字符)")
             else:
                 print("本地缓存不存在，开始流式下载 PG19 数据集...")
+                print("注意: 只下载一条样本以节省空间和时间")
 
+                # 流式加载前 N 条作为候选
                 from datasets import load_dataset
 
                 dataset = load_dataset(
@@ -227,6 +225,7 @@ def load_tokenized_dataset(
                     trust_remote_code=trust_remote_code,
                 )
 
+                # 收集前 10 条作为候选
                 N = 10
                 buffer = []
                 print(f"正在流式加载前 {N} 条样本...")
@@ -235,19 +234,23 @@ def load_tokenized_dataset(
                     print(f"  已加载 {i+1}/{N} 条", end="\r")
                     if i + 1 >= N:
                         break
-                print()
+                print()  # 换行
 
+                # 随机选择一条 (固定种子确保可复现)
                 random_one = random.choice(buffer)
                 texts = [random_one.get(text_column, "")]
                 print(f"✓ 已从前 {N} 条中随机选择 1 条样本 (种子=42)")
                 print(f"  样本长度: {len(texts[0])} 字符")
 
+                # 保存到本地缓存
                 PG19_CACHE_DIR.mkdir(parents=True, exist_ok=True)
                 with open(PG19_CACHE_FILE, "w", encoding="utf-8") as f:
                     json.dump(random_one, f, ensure_ascii=False, indent=2)
                 print(f"✓ 已保存到本地缓存: {PG19_CACHE_FILE}")
+                print(f"  后续运行将直接使用本地缓存，无需重新下载")
 
     else:
+        # 其他数据集的正常加载逻辑
         from datasets import load_dataset
 
         dataset_kwargs = {"split": split, "trust_remote_code": trust_remote_code}
@@ -259,9 +262,11 @@ def load_tokenized_dataset(
         else:
             dataset = load_dataset(dataset_name, **dataset_kwargs)
 
+        # 限制样本数
         if not use_streaming and max_samples:
             dataset = dataset.select(range(min(max_samples, len(dataset))))
 
+        # 收集文本
         texts = []
         for idx, row in enumerate(dataset):
             if use_streaming and max_samples and idx >= max_samples:
@@ -387,12 +392,14 @@ def compute_perplexity(
     total_tokens = 0
     seq_len = encoded_dataset.size(1)
 
+    # 重置显存统计
     if torch.cuda.is_available():
         torch.cuda.reset_peak_memory_stats()
 
     total_start = time.perf_counter()
     prefill_start = time.perf_counter()
 
+    # 使用 StreamingLLM 或普通模式
     if use_streaming and streaming_wrapper is not None:
         context = streaming_wrapper.enable()
     else:
@@ -524,8 +531,6 @@ def _compute_streaming_decode_perplexity(
     else:
         past_key_values = None
         prefill_len = min(max_cache_size, seq_len)
-        dbg_every = int(os.environ.get("STREAMING_DEBUG_EVERY", "200"))
-
         with streaming_wrapper.enable():
             input_ids = encoded_dataset[:, :prefill_len]
             if use_cuda_timing:
@@ -547,13 +552,7 @@ def _compute_streaming_decode_perplexity(
                 total_tokens += labels.numel()
 
             past_key_values = outputs.past_key_values
-            _dbg(f"[STREAM] prefill pkv type={type(past_key_values)} cache_len={_get_cache_len(past_key_values)}")
-
-            before_len = _get_cache_len(past_key_values)
             past_key_values = streaming_wrapper.update(past_key_values)
-            after_len = _get_cache_len(past_key_values)
-            _dbg(f"[STREAM] after update (prefill) cache_len: {before_len} -> {after_len}")
-
             if use_cuda_timing:
                 prefill_end_evt.record()
 
@@ -567,20 +566,16 @@ def _compute_streaming_decode_perplexity(
                 current_input = encoded_dataset[:, pos:pos + 1]
                 target = encoded_dataset[:, pos + 1]
 
-                if pos % dbg_every == 0:
-                    _dbg(f"[STREAM] step pos={pos} input_id={int(current_input.item())} target_id={int(target.item())}")
-
                 if use_cuda_timing and not first_token_recorded:
                     first_start_evt.record()
                 with torch.no_grad():
                     cache_len = _get_cache_len(past_key_values)
-                    if pos % dbg_every == 0:
-                        _dbg(f"[STREAM] cache_len={cache_len} (expected <= max_cache_size={max_cache_size})")
 
                     # Q token should be placed right after the (compressed) logical cache.
                     position_ids = torch.tensor([[cache_len]], device=current_input.device, dtype=torch.long)
 
-                    # Provide attention_mask explicitly: [B, past_len + q_len]
+                    # Some HF models behave better when attention_mask is provided in decode mode.
+                    # Shape: [B, past_len + q_len]
                     attention_mask = torch.ones(
                         (current_input.shape[0], cache_len + current_input.shape[1]),
                         device=current_input.device,
@@ -597,27 +592,16 @@ def _compute_streaming_decode_perplexity(
                 if use_cuda_timing and not first_token_recorded:
                     first_end_evt.record()
 
-                if pos % dbg_every == 0:
-                    try:
-                        last = outputs.logits[:, -1, :]
-                        _dbg(
-                            f"[STREAM] logits last token: mean={last.mean().item():.4f} "
-                            f"std={last.std().item():.4f} max={last.max().item():.4f}"
-                        )
-                    except Exception as e:
-                        _dbg(f"[STREAM] logits stats failed: {e}")
-
                 logits = outputs.logits[:, -1, :]
-                loss = F.cross_entropy(logits, target, reduction="sum")
+                loss = F.cross_entropy(
+                    logits,
+                    target,
+                    reduction="sum",
+                )
                 total_nll += loss.item()
                 total_tokens += target.numel()
-
                 past_key_values = outputs.past_key_values
-                before_len = _get_cache_len(past_key_values)
                 past_key_values = streaming_wrapper.update(past_key_values)
-                after_len = _get_cache_len(past_key_values)
-                if after_len != before_len or (pos % dbg_every == 0):
-                    _dbg(f"[STREAM] update cache_len: {before_len} -> {after_len}")
 
                 if not first_token_recorded:
                     first_token_recorded = True
@@ -631,7 +615,6 @@ def _compute_streaming_decode_perplexity(
             first_token_time = first_start_evt.elapsed_time(first_end_evt) / 1000.0
     else:
         total_time = time.perf_counter() - total_start
-
     ppl = torch.exp(torch.tensor(total_nll / total_tokens))
     return PerplexityResult(
         perplexity=ppl.item(),

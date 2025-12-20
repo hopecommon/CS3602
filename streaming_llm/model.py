@@ -108,16 +108,18 @@ class StreamingLLMWrapper:
     # ---------------------------------------------------------------------
     def update(self, past_key_values: Cache | tuple | None):
         """
-        对当前的 past_key_values 执行 StreamingLLM 压缩,并重新计算 RoPE。
-        
-        Args:
-            past_key_values: transformers Cache object or legacy tuple
-            
-        Returns:
-            The updated past_key_values (same type as input). 
-            If input was a tuple, returns a NEW tuple with updated tensors.
-            If input was a Cache object, returns it (modified in-place).
+        Debug-enhanced StreamingLLM update().
+        Prints key diagnostics to locate why PPL explodes (150+).
+        Controlled by env var:
+        - STREAMING_DEBUG=1
+        - STREAMING_DEBUG_EVERY=200  (print every N updates)
         """
+        def _dbg(msg: str):
+            if os.environ.get("STREAMING_DEBUG", "0") == "1":
+                print(msg, flush=True)
+
+        dbg_every = int(os.environ.get("STREAMING_DEBUG_EVERY", "200"))
+
         if not self._enabled or past_key_values is None:
             return past_key_values
 
@@ -128,9 +130,8 @@ class StreamingLLMWrapper:
         elif isinstance(past_key_values, Cache):
             cache_obj = past_key_values
         else:
-            # Try to handle as generic object if it has .layers or assume it's unsupported
             if not hasattr(past_key_values, "layers"):
-                 raise TypeError(
+                raise TypeError(
                     f"StreamingLLMWrapper received unsupported cache type: {type(past_key_values)}. "
                     "Expected transformers.Cache or tuple."
                 )
@@ -149,17 +150,41 @@ class StreamingLLMWrapper:
 
         cache_limit = self._cache_capacity
         overflow = seq_len - cache_limit
+
+        # --- debug header (occasionally) ---
+        # Use an internal counter so we can print every N calls
+        if not hasattr(self, "_dbg_step"):
+            self._dbg_step = 0
+        self._dbg_step += 1
+
+        if self._dbg_step % dbg_every == 0:
+            _dbg(
+                f"[WRAP] step={self._dbg_step} enabled={self._enabled} "
+                f"type={'tuple' if is_legacy else type(past_key_values)} "
+                f"seq_len={seq_len} cache_limit={cache_limit} overflow={overflow} "
+                f"compress_every={self.compress_every} supports_slice_api={self._supports_slice_api}"
+            )
+
         if overflow <= 0:
             return past_key_values
         if overflow < self.compress_every:
+            # not enough overflow to trigger a compress this call
             return past_key_values
 
         indices = None
         slice_info = None
+        kept = None
+
         if self._supports_slice_api:
             slice_info = self.cache.get_slice_info(seq_len)
-            sink_count, recent_start, _ = slice_info
+            sink_count, recent_start, total_len = slice_info
             kept = sink_count + max(0, seq_len - recent_start)
+
+            if self._dbg_step % dbg_every == 0:
+                _dbg(
+                    f"[WRAP] slice_info: sink={sink_count}, recent_start={recent_start}, total_len={total_len}, kept={kept}, "
+                    f"shift(sink-recent)={sink_count - recent_start}"
+                )
         else:
             indices = self.cache.get_keep_indices(seq_len, device)
             if indices is None:
@@ -167,21 +192,31 @@ class StreamingLLMWrapper:
             old_positions_1d = indices.to(dtype=torch.long)
             kept = int(old_positions_1d.numel())
 
+            if self._dbg_step % dbg_every == 0:
+                _dbg(
+                    f"[WRAP] keep_indices: kept={kept}, old_pos[0]={int(old_positions_1d[0])}, old_pos[-1]={int(old_positions_1d[-1])}"
+                )
+
+        # ---- per-layer compress + RoPE fix ----
         for layer_idx, layer in enumerate(cache_obj.layers):
             key_states = layer.keys
             value_states = layer.values
 
+            # Basic shape sanity (assume [B,H,T,D])
+            if key_states.ndim != 4:
+                _dbg(f"[WRAP][ERROR] layer{layer_idx} key ndim={key_states.ndim} shape={tuple(key_states.shape)} (expected 4D [B,H,T,D])")
+
+            if self._dbg_step % dbg_every == 0 and layer_idx == 0:
+                _dbg(f"[WRAP] layer0 key shape={tuple(key_states.shape)} val shape={tuple(value_states.shape)} dtype={key_states.dtype}")
+
             if self._supports_slice_api and slice_info is not None:
                 sink_count, recent_start, total_len = slice_info
-                buffer_key = self._get_or_init_buffer(
-                    self._layer_key_buffers, layer_idx, key_states
-                )
+
+                buffer_key = self._get_or_init_buffer(self._layer_key_buffers, layer_idx, key_states)
                 compressed_key = self._slice_cache_tensor(
                     key_states, sink_count, recent_start, total_len, kept, buffer_key
                 )
-                buffer_value = self._get_or_init_buffer(
-                    self._layer_value_buffers, layer_idx, value_states
-                )
+                buffer_value = self._get_or_init_buffer(self._layer_value_buffers, layer_idx, value_states)
                 compressed_value = self._slice_cache_tensor(
                     value_states, sink_count, recent_start, total_len, kept, buffer_value
                 )
@@ -190,37 +225,67 @@ class StreamingLLMWrapper:
                 compressed_value = torch.index_select(value_states, 2, indices).contiguous()
 
             layer_info = self._layer_infos[min(layer_idx, len(self._layer_infos) - 1)]
+            rotary_ndims = layer_info.rotary_ndims
+            inv_freq = layer_info.inv_freq
+
+            if self._dbg_step % dbg_every == 0 and layer_idx == 0:
+                inv_shape = tuple(inv_freq.shape) if isinstance(inv_freq, torch.Tensor) else None
+                _dbg(f"[WRAP] layer0 rotary_ndims={rotary_ndims} inv_freq_shape={inv_shape} head_dim={compressed_key.shape[-1]}")
+
+            # Debug: measure whether RoPE fix actually changes something
+            # Take one representative vector (layer0, head0, token=sink_count if exists) from rotary dims
+            def _sample_rotary_vec(x: torch.Tensor, token_index: int, rotary_dim: int):
+                # x: [B,H,T,D]
+                t = x.shape[2]
+                if t == 0:
+                    return None
+                ti = min(max(token_index, 0), t - 1)
+                rd = min(int(rotary_dim), x.shape[-1])
+                if rd <= 0:
+                    return None
+                return x[0, 0, ti, :rd].detach().float().cpu()
+
             if self._supports_slice_api and slice_info is not None:
                 # Start+Recent pruning implies a constant delta for the recent segment:
                 # delta = new_pos - old_pos = sink_count - recent_start
-                if (
-                    layer_info.inv_freq is not None
-                    and layer_info.rotary_ndims
-                    and recent_start < total_len
-                ):
+                if inv_freq is not None and rotary_ndims and recent_start < total_len:
                     shift = int(sink_count - recent_start)
+
                     if shift != 0:
-                        rotary_dim = int(layer_info.rotary_ndims)
+                        rotary_dim = int(rotary_ndims)
+
+                        # IMPORTANT: half uses rotary_dim//2; inv_freq is usually of length rotary_dim//2
                         half = min(rotary_dim, compressed_key.shape[-1]) // 2
+
+                        if self._dbg_step % dbg_every == 0 and layer_idx == 0:
+                            _dbg(f"[WRAP] layer0 shift-path: shift={shift} rotary_dim={rotary_dim} half={half}")
+
+                        # sample before
+                        before = None
+                        if self._dbg_step % dbg_every == 0 and layer_idx == 0:
+                            before = _sample_rotary_vec(compressed_key, sink_count, rotary_dim)
+
                         if half > 0:
-                            cache_key = (
-                                id(layer_info.inv_freq),
-                                shift,
-                                half,
-                                compressed_key.dtype,
-                                compressed_key.device,
-                            )
+                            cache_key = (id(inv_freq), shift, half, compressed_key.dtype, compressed_key.device)
                             cached = self._shift_rotation_cache.get(cache_key)
+
                             if cached is None:
-                                inv = layer_info.inv_freq.to(
-                                    device=compressed_key.device, dtype=torch.float32
-                                )[:half]
+                                inv = inv_freq.to(device=compressed_key.device, dtype=torch.float32)
+
+                                # Debug: inv_freq length should be >= half
+                                if self._dbg_step % dbg_every == 0 and layer_idx == 0:
+                                    _dbg(f"[WRAP] layer0 inv_freq len={inv.numel()} need_half={half}")
+
+                                inv = inv[:half]
                                 angle = inv * float(shift)
                                 cos = angle.cos().to(dtype=compressed_key.dtype)
                                 sin = angle.sin().to(dtype=compressed_key.dtype)
                                 cached = (cos, sin, rotary_dim)
                                 self._shift_rotation_cache[cache_key] = cached
+
                             cos, sin, rotary_dim = cached
+
+                            # apply in-place rotation to RECENT segment (starts at sink_count)
                             apply_rotary_shift_inplace(
                                 compressed_key,
                                 start_index=sink_count,
@@ -228,50 +293,67 @@ class StreamingLLMWrapper:
                                 sin=sin,
                                 rotary_dim=rotary_dim,
                             )
+
+                        # sample after
+                        if self._dbg_step % dbg_every == 0 and layer_idx == 0 and before is not None:
+                            after = _sample_rotary_vec(compressed_key, sink_count, rotary_dim)
+                            if after is not None:
+                                delta = (after - before).pow(2).sum().sqrt().item()
+                                _dbg(f"[WRAP] layer0 shift-path rotary delta(L2)={delta:.6f}  (expect >0 if rotation applied)")
+                    else:
+                        if self._dbg_step % dbg_every == 0 and layer_idx == 0:
+                            _dbg("[WRAP] layer0 shift == 0, skip apply_rotary_shift_inplace")
+                else:
+                    if self._dbg_step % dbg_every == 0 and layer_idx == 0:
+                        _dbg("[WRAP] layer0 shift-path conditions not met; skip RoPE fix (THIS IS SUSPICIOUS if model uses RoPE)")
             else:
+                # General gather path: rerotate based on old/new positions
                 old_positions = old_positions_1d.unsqueeze(0).expand(batch_size, -1)
-                new_positions = (
-                    torch.arange(kept, device=device, dtype=torch.long)
-                    .unsqueeze(0)
-                    .expand(batch_size, -1)
-                )
+                new_positions = torch.arange(kept, device=device, dtype=torch.long).unsqueeze(0).expand(batch_size, -1)
+
                 rotation = None
-                if (
-                    self.reuse_rotation
-                    and layer_info.inv_freq is not None
-                    and layer_info.rotary_ndims
-                ):
-                    cache_key = (
-                        id(layer_info.inv_freq),
-                        layer_info.rotary_ndims,
-                        compressed_key.dtype,
-                        compressed_key.device,
-                    )
+                if self.reuse_rotation and inv_freq is not None and rotary_ndims:
+                    cache_key = (id(inv_freq), rotary_ndims, compressed_key.dtype, compressed_key.device)
                     rotation = self._shift_rotation_cache.get(cache_key)
                     if rotation is None:
                         rotation = build_rotation_cache(
                             old_positions=old_positions,
                             new_positions=new_positions,
-                            inv_freq=layer_info.inv_freq.to(device=device),
-                            rotary_dim=layer_info.rotary_ndims,
+                            inv_freq=inv_freq.to(device=device),
+                            rotary_dim=rotary_ndims,
                             dtype=compressed_key.dtype,
                         )
                         self._shift_rotation_cache[cache_key] = rotation
+
+                before = None
+                if self._dbg_step % dbg_every == 0 and layer_idx == 0 and rotary_ndims:
+                    before = _sample_rotary_vec(compressed_key, 0, int(rotary_ndims))
+
                 compressed_key = rerotate_keys(
                     compressed_key,
                     old_positions,
                     new_positions,
-                    inv_freq=layer_info.inv_freq,
-                    rotary_dim=layer_info.rotary_ndims,
+                    inv_freq=inv_freq,
+                    rotary_dim=rotary_ndims,
                     precomputed=rotation,
                 )
+
+                if self._dbg_step % dbg_every == 0 and layer_idx == 0 and before is not None:
+                    after = _sample_rotary_vec(compressed_key, 0, int(rotary_ndims))
+                    if after is not None:
+                        delta = (after - before).pow(2).sum().sqrt().item()
+                        _dbg(f"[WRAP] layer0 rerotate-path rotary delta(L2)={delta:.6f} (expect >0)")
 
             layer.keys = compressed_key
             layer.values = compressed_value
 
+            if self._dbg_step % dbg_every == 0 and layer_idx == 0:
+                _dbg(f"[WRAP] layer0 writeback keys shape={tuple(layer.keys.shape)} (expect T=={kept})")
+
         if is_legacy:
             return cache_obj.to_tuple()
         return past_key_values
+
 
     def _slice_cache_tensor(
         self,
