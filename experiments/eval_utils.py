@@ -22,6 +22,22 @@ import torch.nn as nn
 from tqdm import tqdm
 
 
+def _get_cache_len(pkv) -> int:
+    """Robustly infer current KV cache length from past_key_values.
+
+    Supports:
+      - legacy tuple: pkv[layer] = (k, v), k: [B, H, T, D]
+      - transformers Cache-like: pkv.layers[layer].keys
+    """
+    if pkv is None:
+        return 0
+    if isinstance(pkv, tuple):
+        return int(pkv[0][0].shape[2])
+    if hasattr(pkv, "layers") and len(pkv.layers) > 0 and hasattr(pkv.layers[0], "keys"):
+        return int(pkv.layers[0].keys.shape[2])
+    raise TypeError(f"Unsupported past_key_values type: {type(pkv)}")
+
+
 def _load_json_entries(path: Path) -> list[dict]:
     text = path.read_text(encoding="utf-8").strip()
     if not text:
@@ -39,6 +55,7 @@ def _load_json_entries(path: Path) -> list[dict]:
                 continue
             entries.append(json.loads(line))
         return entries
+
 
 @dataclass
 class PerplexityResult:
@@ -129,7 +146,7 @@ def load_tokenized_dataset(
 ) -> Tensor:
     """
     加载并 tokenize 数据集
-    
+
     Args:
         dataset_name: 数据集名称 (如 'wikitext', 'pg19')
         dataset_config: 数据集配置 (如 'wikitext-103-v1')
@@ -140,7 +157,7 @@ def load_tokenized_dataset(
         max_eval_tokens: 最大评估 token 数
         trust_remote_code: 是否信任远程代码
         use_streaming: 是否使用流式加载
-    
+
     Returns:
         input_ids: tokenized 输入 [1, seq_len]
     """
@@ -186,93 +203,69 @@ def load_tokenized_dataset(
                 raise ValueError(f"{sample_path} 中没有可用文本")
             texts = [text]
         else:
-        
+
             # 检查本地缓存
             if PG19_CACHE_FILE.exists():
                 print(f"✓ 使用本地缓存: {PG19_CACHE_FILE}")
-                try:
-                    with open(PG19_CACHE_FILE, 'r', encoding='utf-8') as f:
-                        cached_data = json.load(f)
-                    text = cached_data.get(text_column, "") or cached_data.get("text", "")
-                    if not text:
-                         # Try fallback keys or structure
-                         if isinstance(cached_data, dict):
-                             # Maybe it's nested or different key
-                             text = str(cached_data) # Last resort
-                    
-                    if not text or len(text) < 100: # Basic validity check
-                         print("  缓存数据无效或过短，重新下载...")
-                         raise ValueError("Invalid cache")
-                         
-                    texts = [text]
-                    print(f"  已加载缓存数据 (长度: {len(texts[0])} 字符)")
-                except Exception as e:
-                    print(f"  读取缓存失败: {e}")
-                    # Fall through to download logic
-                    if PG19_CACHE_FILE.exists():
-                        PG19_CACHE_FILE.unlink() # Delete bad cache
-                    texts = None
-            
-            if not texts:
+                with open(PG19_CACHE_FILE, "r", encoding="utf-8") as f:
+                    cached_data = json.load(f)
+                texts = [cached_data.get(text_column, "")]
+                print(f"  已加载缓存数据 (长度: {len(texts[0])} 字符)")
+            else:
                 print("本地缓存不存在，开始流式下载 PG19 数据集...")
                 print("注意: 只下载一条样本以节省空间和时间")
-                
+
                 # 流式加载前 N 条作为候选
                 from datasets import load_dataset
+
                 dataset = load_dataset(
                     dataset_name,
                     split=split,
                     streaming=True,
-                    trust_remote_code=trust_remote_code
+                    trust_remote_code=trust_remote_code,
                 )
-                
+
                 # 收集前 10 条作为候选
                 N = 10
                 buffer = []
                 print(f"正在流式加载前 {N} 条样本...")
                 for i, example in enumerate(dataset):
                     buffer.append(example)
-                    print(f"  已加载 {i+1}/{N} 条", end='\r')
+                    print(f"  已加载 {i+1}/{N} 条", end="\r")
                     if i + 1 >= N:
                         break
                 print()  # 换行
-                
+
                 # 随机选择一条 (固定种子确保可复现)
                 random_one = random.choice(buffer)
                 texts = [random_one.get(text_column, "")]
-                if not texts[0] or not isinstance(texts[0], str):
-                    # Fallback to 'text' column or check content
-                    texts = [random_one.get("text", "")]
-                
                 print(f"✓ 已从前 {N} 条中随机选择 1 条样本 (种子=42)")
                 print(f"  样本长度: {len(texts[0])} 字符")
-                
+
                 # 保存到本地缓存
                 PG19_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-                with open(PG19_CACHE_FILE, 'w', encoding='utf-8') as f:
+                with open(PG19_CACHE_FILE, "w", encoding="utf-8") as f:
                     json.dump(random_one, f, ensure_ascii=False, indent=2)
                 print(f"✓ 已保存到本地缓存: {PG19_CACHE_FILE}")
                 print(f"  后续运行将直接使用本地缓存，无需重新下载")
-    
+
     else:
         # 其他数据集的正常加载逻辑
         from datasets import load_dataset
-        dataset_kwargs = {
-            "split": split,
-            "trust_remote_code": trust_remote_code
-        }
+
+        dataset_kwargs = {"split": split, "trust_remote_code": trust_remote_code}
         if use_streaming:
             dataset_kwargs["streaming"] = True
-        
+
         if dataset_config:
             dataset = load_dataset(dataset_name, dataset_config, **dataset_kwargs)
         else:
             dataset = load_dataset(dataset_name, **dataset_kwargs)
-        
+
         # 限制样本数
         if not use_streaming and max_samples:
             dataset = dataset.select(range(min(max_samples, len(dataset))))
-        
+
         # 收集文本
         texts = []
         for idx, row in enumerate(dataset):
@@ -281,10 +274,11 @@ def load_tokenized_dataset(
             text = row.get(text_column, "")
             if text and not text.isspace():
                 texts.append(text)
-    
+
     if not texts:
         raise ValueError(f"No non-empty rows found for dataset {dataset_name}")
-    
+
+
 def check_sdpa_flash_available(dtype=torch.bfloat16):
     if not torch.cuda.is_available():
         return {"flash_enabled": False, "reason": "cuda_unavailable"}
@@ -305,6 +299,7 @@ def check_sdpa_flash_available(dtype=torch.bfloat16):
             result["smoke_test"] = False
             result["error"] = str(e)
     return result
+
 
 class NeoXFlashAttentionAdapter(nn.Module):
     def __init__(self, original_module: nn.Module, backend: str = "auto"):
@@ -351,6 +346,7 @@ class NeoXFlashAttentionAdapter(nn.Module):
                 **kwargs,
             )
 
+
 def wrap_attention_modules(model: nn.Module, backend: str = "auto"):
     for name, module in model.named_modules():
         has_qkv = hasattr(module, "query_key_value") and isinstance(getattr(module, "query_key_value"), nn.Linear)
@@ -373,25 +369,11 @@ def compute_perplexity(
     max_length: int,
     stride: int,
     use_streaming: bool = False,
-    streaming_wrapper = None,
+    streaming_wrapper=None,
     max_cache_size: Optional[int] = None,
 ) -> PerplexityResult:
     """
     计算 perplexity
-    
-    Args:
-        model: 语言模型
-        encoded_dataset: tokenized 数据集 [1, seq_len]
-        device: 设备
-        max_length: 单次评估的最大长度
-        stride: 滑动步长
-        use_streaming: 是否使用 StreamingLLM
-        streaming_wrapper: StreamingLLMWrapper 实例
-    
-    Returns:
-        perplexity: PPL 值
-        total_time: 总时间 (秒)
-        prefill_time: prefill 时间 (秒)
     """
     if encoded_dataset.device != device:
         encoded_dataset = encoded_dataset.to(device)
@@ -409,44 +391,45 @@ def compute_perplexity(
     nlls = []
     total_tokens = 0
     seq_len = encoded_dataset.size(1)
-    
+
     # 重置显存统计
     if torch.cuda.is_available():
         torch.cuda.reset_peak_memory_stats()
-    
+
     total_start = time.perf_counter()
     prefill_start = time.perf_counter()
-    
+
     # 使用 StreamingLLM 或普通模式
     if use_streaming and streaming_wrapper is not None:
         context = streaming_wrapper.enable()
     else:
         from contextlib import nullcontext
+
         context = nullcontext()
-    
+
     with context:
         for start_idx in range(0, seq_len, stride):
             begin_loc = max(start_idx + stride - max_length, 0)
             end_loc = min(start_idx + stride, seq_len)
             trg_len = end_loc - start_idx
-            
+
             input_ids = encoded_dataset[:, begin_loc:end_loc].to(device)
             target_ids = input_ids.clone()
             target_ids[:, :-trg_len] = -100
-            
+
             with torch.no_grad():
                 outputs = model(input_ids=input_ids, labels=target_ids, use_cache=True)
-            
+
             neg_log_likelihood = outputs.loss * trg_len
             nlls.append(neg_log_likelihood.detach().to("cpu"))
             total_tokens += trg_len
-            
+
             if end_loc == seq_len:
                 break
-    
+
     prefill_time = time.perf_counter() - prefill_start
     total_time = time.perf_counter() - total_start
-    
+
     ppl = torch.exp(torch.stack(nlls).sum() / total_tokens)
 
     return PerplexityResult(
@@ -462,17 +445,10 @@ def _compute_streaming_decode_perplexity(
     encoded_dataset: Tensor,
     device: torch.device,
     max_cache_size: int,
-    streaming_wrapper = None,
+    streaming_wrapper=None,
 ) -> PerplexityResult:
     """
     使用解码式评估 (逐 token) 计算 PPL 和时间
-
-    Args:
-        model: 语言模型
-        encoded_dataset: tokenized 数据集
-        device: 设备
-        max_cache_size: 最多保留的 token 数 (n_sink + window_size)
-        streaming_wrapper: 若提供则使用 StreamingLLM, 否则模拟 sliding window baseline
     """
     seq_len = encoded_dataset.size(1)
     if seq_len < 2:
@@ -503,7 +479,6 @@ def _compute_streaming_decode_perplexity(
 
     if streaming_wrapper is None:
         # Baseline: 使用 sliding window 限制上下文长度
-        # 这样可以避免超过模型的 max_position_embeddings 限制
         prefill_len = min(max_cache_size, seq_len)
         input_ids = encoded_dataset[:, :prefill_len]
         if use_cuda_timing:
@@ -530,9 +505,7 @@ def _compute_streaming_decode_perplexity(
             prefill_time = time.perf_counter() - prefill_start
             first_token_recorded = False
 
-        # Add None check for past_key_values if used (Baseline doesn't use cache here, but good practice)
-        
-        for pos in tqdm(range(prefill_len - 1, seq_len - 1), desc="Decoding (Baseline)"):
+        for pos in range(prefill_len - 1, seq_len - 1):
             start_idx = max(0, pos + 1 - max_cache_size)
             context = encoded_dataset[:, start_idx:pos + 1]
             target = encoded_dataset[:, pos + 1]
@@ -563,7 +536,9 @@ def _compute_streaming_decode_perplexity(
             if use_cuda_timing:
                 start_evt.record()
             with torch.no_grad():
-                outputs = model(input_ids=input_ids, use_cache=True)
+                # Make RoPE positions explicit for prefill to avoid any backend-dependent defaults.
+                position_ids = torch.arange(input_ids.shape[1], device=input_ids.device, dtype=torch.long).unsqueeze(0)
+                outputs = model(input_ids=input_ids, use_cache=True, position_ids=position_ids)
 
             logits = outputs.logits[:, :-1, :]
             labels = input_ids[:, 1:]
@@ -594,10 +569,15 @@ def _compute_streaming_decode_perplexity(
                 if use_cuda_timing and not first_token_recorded:
                     first_start_evt.record()
                 with torch.no_grad():
-                    cache_len = past_key_values[0][0].shape[2]   # [B, H, T, D]
+                    cache_len = _get_cache_len(past_key_values)
 
-                    position_ids = torch.tensor(
-                        [[cache_len]],
+                    # Q token should be placed right after the (compressed) logical cache.
+                    position_ids = torch.tensor([[cache_len]], device=current_input.device, dtype=torch.long)
+
+                    # Some HF models behave better when attention_mask is provided in decode mode.
+                    # Shape: [B, past_len + q_len]
+                    attention_mask = torch.ones(
+                        (current_input.shape[0], cache_len + current_input.shape[1]),
                         device=current_input.device,
                         dtype=torch.long,
                     )
@@ -606,6 +586,7 @@ def _compute_streaming_decode_perplexity(
                         input_ids=current_input,
                         past_key_values=past_key_values,
                         position_ids=position_ids,
+                        attention_mask=attention_mask,
                         use_cache=True,
                     )
                 if use_cuda_timing and not first_token_recorded:
@@ -629,16 +610,9 @@ def _compute_streaming_decode_perplexity(
         end_evt.record()
         torch.cuda.synchronize()
         total_time = start_evt.elapsed_time(end_evt) / 1000.0
-        # Check if prefill event was recorded (might not be if loop was empty or skipped)
-        try:
-             prefill_time = start_evt.elapsed_time(prefill_end_evt) / 1000.0
-        except RuntimeError:
-             prefill_time = 0.0
+        prefill_time = start_evt.elapsed_time(prefill_end_evt) / 1000.0
         if total_tokens > 0:
-            try:
-                first_token_time = first_start_evt.elapsed_time(first_end_evt) / 1000.0
-            except RuntimeError:
-                 first_token_time = 0.0
+            first_token_time = first_start_evt.elapsed_time(first_end_evt) / 1000.0
     else:
         total_time = time.perf_counter() - total_start
     ppl = torch.exp(torch.tensor(total_nll / total_tokens))
@@ -653,19 +627,10 @@ def _compute_streaming_decode_perplexity(
 _compute_streaming_perplexity = _compute_streaming_decode_perplexity
 
 
-def save_results(
-    results: Dict[str, Any],
-    output_path: Path
-):
+def save_results(results: Dict[str, Any], output_path: Path):
     """
     保存结果到 JSON 文件
-    
-    Args:
-        results: 结果字典
-        output_path: 输出路径
     """
-    import json
-    
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(results, indent=2))
     print(f"\n结果已保存到: {output_path}")
@@ -674,13 +639,9 @@ def save_results(
 def print_results(results: Dict[str, Any]):
     """
     打印结果
-    
-    Args:
-        results: 结果字典
     """
-    import json
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("实验结果")
-    print("="*60)
+    print("=" * 60)
     print(json.dumps(results, indent=2, ensure_ascii=False))
-    print("="*60)
+    print("=" * 60)
