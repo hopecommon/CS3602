@@ -386,8 +386,13 @@ class NeoXFlashAttentionAdapter(nn.Module):
         
         # 1. QKV Projection
         qkv = self.query_key_value(hidden_states)
-        qkv = qkv.view(bsz, q_len, 3, self.num_attention_heads, self.head_size)
-        qkv = qkv.permute(2, 0, 3, 1, 4) # [3, bsz, num_heads, q_len, head_size]
+        
+        # FIX: Pythia/GPT-NeoX uses Interleaved layout: [num_heads, 3, head_size]
+        # Not [3, num_heads, head_size] which would be Concatenated layout
+        qkv = qkv.view(bsz, q_len, self.num_attention_heads, 3, self.head_size)
+        
+        # Permute to [3, bsz, num_heads, q_len, head_size] for easy splitting
+        qkv = qkv.permute(3, 0, 2, 1, 4) 
         query, key, value = qkv[0], qkv[1], qkv[2]
         
         # 2. RoPE (Manual implementation since we bypass original forward)
