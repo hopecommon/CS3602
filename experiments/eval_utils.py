@@ -190,11 +190,30 @@ def load_tokenized_dataset(
             # 检查本地缓存
             if PG19_CACHE_FILE.exists():
                 print(f"✓ 使用本地缓存: {PG19_CACHE_FILE}")
-                with open(PG19_CACHE_FILE, 'r', encoding='utf-8') as f:
-                    cached_data = json.load(f)
-                texts = [cached_data.get(text_column, "")]
-                print(f"  已加载缓存数据 (长度: {len(texts[0])} 字符)")
-            else:
+                try:
+                    with open(PG19_CACHE_FILE, 'r', encoding='utf-8') as f:
+                        cached_data = json.load(f)
+                    text = cached_data.get(text_column, "") or cached_data.get("text", "")
+                    if not text:
+                         # Try fallback keys or structure
+                         if isinstance(cached_data, dict):
+                             # Maybe it's nested or different key
+                             text = str(cached_data) # Last resort
+                    
+                    if not text or len(text) < 100: # Basic validity check
+                         print("  缓存数据无效或过短，重新下载...")
+                         raise ValueError("Invalid cache")
+                         
+                    texts = [text]
+                    print(f"  已加载缓存数据 (长度: {len(texts[0])} 字符)")
+                except Exception as e:
+                    print(f"  读取缓存失败: {e}")
+                    # Fall through to download logic
+                    if PG19_CACHE_FILE.exists():
+                        PG19_CACHE_FILE.unlink() # Delete bad cache
+                    texts = None
+            
+            if not texts:
                 print("本地缓存不存在，开始流式下载 PG19 数据集...")
                 print("注意: 只下载一条样本以节省空间和时间")
                 
@@ -397,7 +416,27 @@ class NeoXFlashAttentionAdapter(nn.Module):
              # Need to match dimensions for apply_rotary_pos_emb
              # Standard implementation:
              from transformers.models.gpt_neox.modeling_gpt_neox import apply_rotary_pos_emb
-             query, key = apply_rotary_pos_emb(query, key, cos, sin, position_ids)
+             
+             # IMPORTANT FIX: Ensure dimensions match for RoPE
+             # query/key: [bsz, num_heads, q_len, head_size]
+             # cos/sin: [q_len, rotary_dim] or [1, q_len, rotary_dim] depending on implementation
+             
+             # If partial rotary (e.g. Pythia 2.8B rotates 32 dims out of 128), we must split
+             rotary_dim = cos.shape[-1]
+             head_dim = query.shape[-1]
+             
+             if rotary_dim < head_dim:
+                 q_rot = query[..., :rotary_dim]
+                 q_pass = query[..., rotary_dim:]
+                 k_rot = key[..., :rotary_dim]
+                 k_pass = key[..., rotary_dim:]
+                 
+                 q_rot, k_rot = apply_rotary_pos_emb(q_rot, k_rot, cos, sin, position_ids)
+                 
+                 query = torch.cat((q_rot, q_pass), dim=-1)
+                 key = torch.cat((k_rot, k_pass), dim=-1)
+             else:
+                 query, key = apply_rotary_pos_emb(query, key, cos, sin, position_ids)
 
         # 3. KV Cache Management
         if layer_past is not None:
