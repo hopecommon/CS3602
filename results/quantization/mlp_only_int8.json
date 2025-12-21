@@ -1,0 +1,68 @@
+{
+  "model": "EleutherAI/pythia-2.8b",
+  "dataset": "wikitext:wikitext-103-v1",
+  "split": "test",
+  "max_length": 2048,
+  "stride": 1024,
+  "max_samples": 64,
+  "max_eval_tokens": 4096,
+  "total_tokens": 4096,
+  "streaming_llm": {
+    "n_sink": 4,
+    "window_size": 1020,
+    "implementation": "ours",
+    "cache_type": "StreamingKVCache",
+    "max_cache_size": 1024
+  },
+  "quantization": {
+    "type": "int8wo_mlp_only_v2",
+    "quantized_modules": 64
+  },
+  "device": "cuda",
+  "dtype": "torch.float16",
+  "baseline": {
+    "perplexity": 9.530555725097656,
+    "runtime_sec": 144.149546875,
+    "prefill_sec": 0.39597976684570313,
+    "first_token_latency_sec": 0.04492473602294922,
+    "peak_memory_mb": 5810.06494140625
+  },
+  "streaming": {
+    "perplexity": 9.78385066986084,
+    "runtime_sec": 47.86260546875,
+    "prefill_sec": 0.03739519882202148,
+    "first_token_latency_sec": 0.014328960418701173,
+    "peak_memory_mb": 6130.06494140625
+  },
+  "streaming_quant": {
+    "perplexity": 9.79146671295166,
+    "runtime_sec": 103.169953125,
+    "prefill_sec": 0.061496543884277347,
+    "first_token_latency_sec": 0.034478305816650394,
+    "peak_memory_mb": 9840.7783203125
+  },
+  "latency_baseline": {
+    "mean_latency_ms": 14.394477435310062,
+    "std_latency_ms": 0.48139643812068167,
+    "median_latency_ms": 14.314051484689116,
+    "mean_memory_mb": 6116.885091145833
+  },
+  "latency_streaming": {
+    "mean_latency_ms": 14.125516654225066,
+    "std_latency_ms": 0.2296857278938507,
+    "median_latency_ms": 14.107523020356894,
+    "mean_memory_mb": 6286.2431640625
+  },
+  "latency_streaming_quant": {
+    "mean_latency_ms": 31.92378702961529,
+    "std_latency_ms": 0.37002643893917786,
+    "median_latency_ms": 31.97312098927796,
+    "mean_memory_mb": 10091.75146484375
+  },
+  "metrics": {
+    "ppl_increase_percent": 2.657714325054095,
+    "speedup": 3.011736311954784,
+    "latency_speedup": 1.0190407747673107,
+    "latency_speedup_quant": 0.4509013113624799
+  }
+}

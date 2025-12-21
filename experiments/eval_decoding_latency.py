@@ -19,12 +19,13 @@ from typing import Tuple, Dict, List
 
 import torch
 import numpy as np
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoTokenizer
 
 # 添加项目根目录到 path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from streaming_llm import StreamingLLMWrapper
+from model_utils import load_model_with_options, maybe_compile_model
 
 
 def parse_args():
@@ -45,6 +46,29 @@ def parse_args():
         default="float16",
         choices=["float16", "bfloat16", "float32"],
         help="数据类型"
+    )
+    parser.add_argument(
+        "--quantization",
+        type=str,
+        default="none",
+        choices=["none", "int8wo", "int8da", "int4wo"],
+        help="量化配置 (TorchAO)"
+    )
+    parser.add_argument(
+        "--compile",
+        action="store_true",
+        help="启用 torch.compile 以降低框架开销"
+    )
+    parser.add_argument(
+        "--compile-mode",
+        type=str,
+        default="reduce-overhead",
+        help="torch.compile 模式"
+    )
+    parser.add_argument(
+        "--compile-cudagraphs",
+        action="store_true",
+        help="允许 torch.compile 使用 cudagraphs (可能不稳定)"
     )
     
     # 评估参数
@@ -90,6 +114,11 @@ def parse_args():
         choices=["both", "baseline", "streaming"],
         default="both",
         help="评估模式: both=基线+Streaming, baseline=仅基线, streaming=仅 Streaming"
+    )
+    parser.add_argument(
+        "--trust-remote-code",
+        action="store_true",
+        help="信任远程代码"
     )
     parser.add_argument(
         "--baseline-results",
@@ -145,12 +174,15 @@ def warmup_model(
         from contextlib import nullcontext
         context = nullcontext()
     
+    mark_step = getattr(getattr(torch, "compiler", None), "cudagraph_mark_step_begin", None)
     with context:
         with torch.no_grad():
             current_ids = input_ids.to(device)
             past_key_values = None
             
             for _ in range(num_tokens):
+                if torch.cuda.is_available() and mark_step is not None:
+                    mark_step()
                 outputs = model(
                     input_ids=current_ids,
                     past_key_values=past_key_values,
@@ -205,7 +237,8 @@ def measure_decoding_latency(
     else:
         from contextlib import nullcontext
         context = nullcontext()
-    
+
+    mark_step = getattr(getattr(torch, "compiler", None), "cudagraph_mark_step_begin", None)
     with context:
         with torch.no_grad():
             current_ids = input_ids.to(device)
@@ -216,6 +249,8 @@ def measure_decoding_latency(
                 if torch.cuda.is_available():
                     torch.cuda.synchronize()
                 
+                if torch.cuda.is_available() and mark_step is not None:
+                    mark_step()
                 t0 = time.perf_counter()
                 
                 outputs = model(
@@ -442,6 +477,8 @@ def main():
     print(f"模型: {args.model_name}")
     print(f"设备: {device}")
     print(f"数据类型: {torch_dtype}")
+    print(f"量化: {args.quantization}")
+    print(f"compile: {args.compile} ({args.compile_mode})")
     print(f"Cache Size: {args.cache_size}")
     print(f"Prompt Length: {args.prompt_length}")
     print(f"Num Tokens: {args.num_tokens}")
@@ -458,11 +495,21 @@ def main():
     
     # 加载模型
     print("加载模型...")
-    model = AutoModelForCausalLM.from_pretrained(
-        args.model_name,
+    model = load_model_with_options(
+        model_name=args.model_name,
         torch_dtype=torch_dtype,
-    ).to(device)
-    model.eval()
+        device=device,
+        quantization=args.quantization,
+        trust_remote_code=args.trust_remote_code,
+    )
+    model, compile_warning = maybe_compile_model(
+        model,
+        use_compile=args.compile,
+        compile_mode=args.compile_mode,
+        allow_cudagraphs=args.compile_cudagraphs,
+    )
+    if compile_warning:
+        print(f"警告: {compile_warning}")
     
     baseline_results = None
     baseline_source = None
@@ -521,6 +568,11 @@ def main():
         "device": str(device),
         "dtype": str(torch_dtype),
         "mode": args.mode,
+        "quantization": args.quantization,
+        "compile": args.compile,
+        "compile_mode": args.compile_mode,
+        "compile_cudagraphs": args.compile_cudagraphs,
+        "compile_warning": compile_warning,
         "baseline_source": baseline_source,
         "config": {
             "cache_size": args.cache_size,

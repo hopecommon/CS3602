@@ -12,12 +12,13 @@ import sys
 from pathlib import Path
 
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoTokenizer
 
 # 添加项目根目录到 path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from streaming_llm import StartRecentKVCache, StreamingLLMWrapper
+from model_utils import load_model_with_options, maybe_compile_model
 from eval_utils import (
     load_tokenized_dataset,
     compute_perplexity,
@@ -46,6 +47,29 @@ def parse_args():
         default="float16",
         choices=["float16", "bfloat16", "float32"],
         help="数据类型"
+    )
+    parser.add_argument(
+        "--quantization",
+        type=str,
+        default="none",
+        choices=["none", "int8wo", "int8da", "int4wo"],
+        help="量化配置 (TorchAO)"
+    )
+    parser.add_argument(
+        "--compile",
+        action="store_true",
+        help="启用 torch.compile 以降低框架开销"
+    )
+    parser.add_argument(
+        "--compile-mode",
+        type=str,
+        default="reduce-overhead",
+        help="torch.compile 模式"
+    )
+    parser.add_argument(
+        "--compile-cudagraphs",
+        action="store_true",
+        help="允许 torch.compile 使用 cudagraphs (可能不稳定)"
     )
     
     # 数据集参数
@@ -179,6 +203,8 @@ def main():
     print(f"数据集: {args.dataset_name}:{args.dataset_config}")
     print(f"设备: {device}")
     print(f"数据类型: {torch_dtype}")
+    print(f"量化: {args.quantization}")
+    print(f"compile: {args.compile} ({args.compile_mode})")
     print(f"n_sink: {args.n_sink}")
     print(f"window_size: {args.window_size}")
     print(f"模式: {args.mode}")
@@ -210,11 +236,21 @@ def main():
     
     # 加载模型
     print("加载模型...")
-    model = AutoModelForCausalLM.from_pretrained(
-        args.model_name,
+    model = load_model_with_options(
+        model_name=args.model_name,
         torch_dtype=torch_dtype,
-    ).to(device)
-    model.eval()
+        device=device,
+        quantization=args.quantization,
+        trust_remote_code=args.trust_remote_code,
+    )
+    model, compile_warning = maybe_compile_model(
+        model,
+        use_compile=args.compile,
+        compile_mode=args.compile_mode,
+        allow_cudagraphs=args.compile_cudagraphs,
+    )
+    if compile_warning:
+        print(f"警告: {compile_warning}")
     
     baseline_metrics = None
     baseline_source = None
@@ -307,9 +343,14 @@ def main():
             },
             "baseline": baseline_metrics,
             "baseline_source": baseline_source,
-            "device": str(device),
-            "dtype": str(torch_dtype),
-        }
+        "device": str(device),
+        "dtype": str(torch_dtype),
+        "quantization": args.quantization,
+        "compile": args.compile,
+        "compile_mode": args.compile_mode,
+        "compile_cudagraphs": args.compile_cudagraphs,
+        "compile_warning": compile_warning,
+    }
         print_results(results)
         save_results(results, args.output)
         return

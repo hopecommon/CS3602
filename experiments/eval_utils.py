@@ -391,6 +391,7 @@ def _compute_streaming_decode_perplexity(
         torch.cuda.reset_peak_memory_stats()
 
     use_cuda_timing = device.type == "cuda" and torch.cuda.is_available()
+    mark_step = getattr(getattr(torch, "compiler", None), "cudagraph_mark_step_begin", None)
     if use_cuda_timing:
         start_evt = torch.cuda.Event(enable_timing=True)
         prefill_end_evt = torch.cuda.Event(enable_timing=True)
@@ -413,6 +414,8 @@ def _compute_streaming_decode_perplexity(
         if use_cuda_timing:
             start_evt.record()
         with torch.no_grad():
+            if use_cuda_timing and mark_step is not None:
+                mark_step()
             outputs = model(input_ids=input_ids, use_cache=False)
         if use_cuda_timing:
             prefill_end_evt.record()
@@ -442,6 +445,8 @@ def _compute_streaming_decode_perplexity(
             if use_cuda_timing and not first_token_recorded:
                 first_start_evt.record()
             with torch.no_grad():
+                if use_cuda_timing and mark_step is not None:
+                    mark_step()
                 outputs = model(input_ids=context, use_cache=False)
             if use_cuda_timing and not first_token_recorded:
                 first_end_evt.record()
@@ -465,6 +470,8 @@ def _compute_streaming_decode_perplexity(
             if use_cuda_timing:
                 start_evt.record()
             with torch.no_grad():
+                if use_cuda_timing and mark_step is not None:
+                    mark_step()
                 outputs = model(input_ids=input_ids, use_cache=True)
 
             logits = outputs.logits[:, :-1, :]
@@ -496,6 +503,8 @@ def _compute_streaming_decode_perplexity(
                 if use_cuda_timing and not first_token_recorded:
                     first_start_evt.record()
                 with torch.no_grad():
+                    if use_cuda_timing and mark_step is not None:
+                        mark_step()
                     outputs = model(
                         input_ids=current_input,
                         past_key_values=past_key_values,
