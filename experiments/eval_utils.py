@@ -22,49 +22,6 @@ import torch.nn as nn
 from tqdm import tqdm
 
 
-# =========================
-# Small helpers (metrics)
-# =========================
-
-def _bytes_to_mb(x: int) -> float:
-    return float(x) / (1024.0 * 1024.0)
-
-
-def _sizeof_pkv_bytes(pkv) -> int:
-    """
-    Estimate bytes of KV cache.
-
-    Supports:
-      - legacy tuple: pkv[layer] = (k, v), k: [B, H, T, D]
-      - transformers Cache-like: pkv.layers[layer].keys / .values
-    """
-    if pkv is None:
-        return 0
-    total = 0
-    if isinstance(pkv, tuple):
-        for kv in pkv:
-            if kv is None:
-                continue
-            k, v = kv
-            if isinstance(k, torch.Tensor):
-                total += k.numel() * k.element_size()
-            if isinstance(v, torch.Tensor):
-                total += v.numel() * v.element_size()
-        return int(total)
-
-    if hasattr(pkv, "layers") and len(pkv.layers) > 0:
-        for layer in pkv.layers:
-            k = getattr(layer, "keys", None)
-            v = getattr(layer, "values", None)
-            if isinstance(k, torch.Tensor):
-                total += k.numel() * k.element_size()
-            if isinstance(v, torch.Tensor):
-                total += v.numel() * v.element_size()
-        return int(total)
-
-    return 0
-
-
 def _get_cache_len(pkv) -> int:
     """Robustly infer current KV cache length from past_key_values.
 
@@ -81,27 +38,28 @@ def _get_cache_len(pkv) -> int:
     raise TypeError(f"Unsupported past_key_values type: {type(pkv)}")
 
 
-def _env_flag(name: str, default: str = "0") -> bool:
-    return os.environ.get(name, default).strip().lower() in ("1", "true", "yes", "y", "on")
-
-
-def _env_int(name: str, default: int) -> int:
+def _estimate_kv_size_mb(pkv) -> float:
+    """Estimate KV cache size in MB (best-effort)."""
+    if pkv is None:
+        return 0.0
+    total_bytes = 0
     try:
-        return int(os.environ.get(name, str(default)))
+        if isinstance(pkv, tuple):
+            for (k, v) in pkv:
+                total_bytes += k.numel() * k.element_size()
+                total_bytes += v.numel() * v.element_size()
+        elif hasattr(pkv, "layers"):
+            for layer in pkv.layers:
+                k = getattr(layer, "keys", None)
+                v = getattr(layer, "values", None)
+                if k is not None:
+                    total_bytes += k.numel() * k.element_size()
+                if v is not None:
+                    total_bytes += v.numel() * v.element_size()
     except Exception:
-        return default
+        return 0.0
+    return total_bytes / (1024.0 * 1024.0)
 
-
-def _env_float(name: str, default: float) -> float:
-    try:
-        return float(os.environ.get(name, str(default)))
-    except Exception:
-        return default
-
-
-# =========================
-# JSON dataset helpers
-# =========================
 
 def _load_json_entries(path: Path) -> list[dict]:
     text = path.read_text(encoding="utf-8").strip()
@@ -142,12 +100,6 @@ random.seed(42)
 PG19_CACHE_DIR = Path("data/pg19")
 PG19_CACHE_FILE = PG19_CACHE_DIR / "sample.json"
 PG19_SAMPLES_PATTERN = PG19_CACHE_DIR / "long_context_*.json"
-
-# WikiText 本地缓存目录
-WIKITEXT_CACHE_DIR = Path("data/wikitext")
-WIKITEXT_CACHE_FILE = WIKITEXT_CACHE_DIR / "sample.json"
-WIKITEXT_SAMPLES_PATTERN = WIKITEXT_CACHE_DIR / "long_context_*.json"
-
 
 # Utility functions
 def _extract_length_from_name(path: Path) -> Optional[int]:
@@ -198,6 +150,12 @@ def _resolve_wikitext_sample_path() -> Optional[Path]:
     return candidates[0]
 
 
+# WikiText 本地缓存目录
+WIKITEXT_CACHE_DIR = Path("data/wikitext")
+WIKITEXT_CACHE_FILE = WIKITEXT_CACHE_DIR / "sample.json"
+WIKITEXT_SAMPLES_PATTERN = WIKITEXT_CACHE_DIR / "long_context_*.json"
+
+
 def load_tokenized_dataset(
     dataset_name: str,
     dataset_config: Optional[str],
@@ -211,20 +169,6 @@ def load_tokenized_dataset(
 ) -> Tensor:
     """
     加载并 tokenize 数据集
-
-    Args:
-        dataset_name: 数据集名称 (如 'wikitext', 'pg19')
-        dataset_config: 数据集配置 (如 'wikitext-103-v1')
-        split: 数据集分割 (如 'test')
-        text_column: 文本列名 (如 'text')
-        max_samples: 最大样本数
-        tokenizer: tokenizer 实例
-        max_eval_tokens: 最大评估 token 数
-        trust_remote_code: 是否信任远程代码
-        use_streaming: 是否使用流式加载
-
-    Returns:
-        input_ids: tokenized 输入 [1, seq_len]
     """
     # 特殊处理 WikiText: 优先读取预采样样本
     if dataset_name.lower() == "wikitext":
@@ -268,7 +212,6 @@ def load_tokenized_dataset(
                 raise ValueError(f"{sample_path} 中没有可用文本")
             texts = [text]
         else:
-            # 检查本地缓存
             if PG19_CACHE_FILE.exists():
                 print(f"✓ 使用本地缓存: {PG19_CACHE_FILE}")
                 with open(PG19_CACHE_FILE, "r", encoding="utf-8") as f:
@@ -307,7 +250,7 @@ def load_tokenized_dataset(
                 with open(PG19_CACHE_FILE, "w", encoding="utf-8") as f:
                     json.dump(random_one, f, ensure_ascii=False, indent=2)
                 print(f"✓ 已保存到本地缓存: {PG19_CACHE_FILE}")
-                print(f"  后续运行将直接使用本地缓存，无需重新下载")
+                print("  后续运行将直接使用本地缓存，无需重新下载")
 
     else:
         from datasets import load_dataset
@@ -335,7 +278,6 @@ def load_tokenized_dataset(
     if not texts:
         raise ValueError(f"No non-empty rows found for dataset {dataset_name}")
 
-    # tokenize concat
     concatenated = "\n\n".join(texts)
     encodings = tokenizer(concatenated, return_tensors="pt")
     input_ids = encodings.input_ids
@@ -468,6 +410,7 @@ def compute_perplexity(
         context = streaming_wrapper.enable()
     else:
         from contextlib import nullcontext
+
         context = nullcontext()
 
     with context:
@@ -512,14 +455,6 @@ def _compute_streaming_decode_perplexity(
 ) -> PerplexityResult:
     """
     使用解码式评估 (逐 token) 计算 PPL 和时间
-
-    额外输出：
-      - TTFT (prefill + first decode step)
-      - TPOT (decode phase)
-      - tok/s (decode phase)
-      - KV cache bytes (peak)
-      - cuda peak allocated/reserved
-      - wrapper.update 耗时/次数（若启用 streaming_wrapper）
     """
     seq_len = encoded_dataset.size(1)
     if seq_len < 2:
@@ -529,11 +464,6 @@ def _compute_streaming_decode_perplexity(
         encoded_dataset = encoded_dataset.to(device)
 
     max_cache_size = max(2, min(max_cache_size, seq_len))
-
-    # Metrics toggles
-    METRICS = _env_flag("METRICS", "1")  # 默认开启最终汇总输出
-    METRICS_EVERY = _env_int("METRICS_EVERY", 0)  # 0=不打印中间过程；例如 200
-    USE_TQDM = _env_flag("USE_TQDM", "1")
 
     if torch.cuda.is_available():
         torch.cuda.reset_peak_memory_stats()
@@ -545,32 +475,46 @@ def _compute_streaming_decode_perplexity(
         end_evt = torch.cuda.Event(enable_timing=True)
         first_start_evt = torch.cuda.Event(enable_timing=True)
         first_end_evt = torch.cuda.Event(enable_timing=True)
-        step_start_evt = torch.cuda.Event(enable_timing=True)
-        step_end_evt = torch.cuda.Event(enable_timing=True)
-        update_start_evt = torch.cuda.Event(enable_timing=True)
-        update_end_evt = torch.cuda.Event(enable_timing=True)
     else:
         total_start = time.perf_counter()
         prefill_start = time.perf_counter()
 
     total_nll = 0.0
     total_tokens = 0
-    first_token_time = 0.0  # first decode step latency (not including prefill)
+    first_token_time = 0.0
 
-    # KV + memory metrics
-    kv_bytes_peak = 0
-    kv_bytes_first = None
-
+    # Optional: measure streaming_wrapper.update() time (including CUDA sync), controlled by env.
+    measure_update_sync = os.environ.get("MEASURE_UPDATE_SYNC", "0") == "1"
     update_calls = 0
     update_time_sec = 0.0
+    kv_cache_first_mb = None
+    kv_cache_peak_mb = 0.0
 
-    # -----------------------------
-    # Baseline: sliding window
-    # -----------------------------
+    def _do_update(pkv):
+        nonlocal update_calls, update_time_sec, kv_cache_first_mb, kv_cache_peak_mb
+        if streaming_wrapper is None:
+            return pkv
+        update_calls += 1
+        if measure_update_sync and device.type == "cuda" and torch.cuda.is_available():
+            torch.cuda.synchronize()
+            t0 = time.perf_counter()
+            pkv2 = streaming_wrapper.update(pkv)
+            torch.cuda.synchronize()
+            update_time_sec += (time.perf_counter() - t0)
+        else:
+            t0 = time.perf_counter()
+            pkv2 = streaming_wrapper.update(pkv)
+            update_time_sec += (time.perf_counter() - t0) if measure_update_sync else 0.0
+
+        mb = _estimate_kv_size_mb(pkv2)
+        if kv_cache_first_mb is None:
+            kv_cache_first_mb = mb
+        kv_cache_peak_mb = max(kv_cache_peak_mb, mb)
+        return pkv2
+
     if streaming_wrapper is None:
         prefill_len = min(max_cache_size, seq_len)
         input_ids = encoded_dataset[:, :prefill_len]
-
         if use_cuda_timing:
             start_evt.record()
         with torch.no_grad():
@@ -595,269 +539,101 @@ def _compute_streaming_decode_perplexity(
             prefill_time = time.perf_counter() - prefill_start
             first_token_recorded = False
 
-        # decode_steps = seq_len - prefill_len
-        decode_steps = max(0, seq_len - prefill_len)
-        decode_time_accum_sec = 0.0  # only for TPOT when not using cuda events
-
-        iterator = range(prefill_len - 1, seq_len - 1)
-        if USE_TQDM:
-            iterator = tqdm(iterator, desc="Decoding (Baseline)")
-
-        for step_i, pos in enumerate(iterator, start=1):
+        for pos in range(prefill_len - 1, seq_len - 1):
             start_idx = max(0, pos + 1 - max_cache_size)
             context = encoded_dataset[:, start_idx:pos + 1]
             target = encoded_dataset[:, pos + 1]
 
-            if use_cuda_timing:
-                if not first_token_recorded:
-                    first_start_evt.record()
-                step_start_evt.record()
-
-            t0 = None
-            if not use_cuda_timing:
-                t0 = time.perf_counter()
-
+            if use_cuda_timing and not first_token_recorded:
+                first_start_evt.record()
             with torch.no_grad():
                 outputs = model(input_ids=context, use_cache=False)
-
-            if use_cuda_timing:
-                step_end_evt.record()
-                if not first_token_recorded:
-                    first_end_evt.record()
-            else:
-                decode_time_accum_sec += (time.perf_counter() - t0)
+            if use_cuda_timing and not first_token_recorded:
+                first_end_evt.record()
 
             logits = outputs.logits[:, -1, :]
-            loss = F.cross_entropy(logits, target, reduction="sum")
-            total_nll += loss.item()
-            total_tokens += target.numel()
-
-            if not first_token_recorded:
-                first_token_recorded = True
-
-            if METRICS_EVERY > 0 and (step_i % METRICS_EVERY == 0):
-                # baseline 没有 kv cache
-                if use_cuda_timing:
-                    torch.cuda.synchronize()
-                    step_ms = step_start_evt.elapsed_time(step_end_evt)
-                    print(f"[METRIC] baseline step={step_i} step_ms={step_ms:.3f}")
-                else:
-                    print(f"[METRIC] baseline step={step_i}")
-
-        # finalize timing
-        if use_cuda_timing:
-            end_evt.record()
-            torch.cuda.synchronize()
-            total_time = start_evt.elapsed_time(end_evt) / 1000.0
-            prefill_time = start_evt.elapsed_time(prefill_end_evt) / 1000.0
-            if total_tokens > 0:
-                first_token_time = first_start_evt.elapsed_time(first_end_evt) / 1000.0
-            decode_time = max(0.0, total_time - prefill_time)
-        else:
-            total_time = time.perf_counter() - total_start
-            decode_time = decode_time_accum_sec
-
-        ppl = torch.exp(torch.tensor(total_nll / total_tokens))
-
-        # print summary
-        if METRICS:
-            ttft = prefill_time + (first_token_time if first_token_time > 0 else 0.0)
-            tpot = (decode_time / max(1, decode_steps)) if decode_steps > 0 else float("nan")
-            tok_s = (1.0 / tpot) if (decode_steps > 0 and tpot > 0) else 0.0
-            peak_alloc = torch.cuda.max_memory_allocated() if torch.cuda.is_available() else 0
-            peak_reserved = torch.cuda.max_memory_reserved() if torch.cuda.is_available() else 0
-
-            print(
-                f"[METRIC] (Baseline) max_cache_size={max_cache_size} prefill_len={prefill_len} "
-                f"seq_len={seq_len} decode_steps={decode_steps}"
-            )
-            print(
-                f"[METRIC] (Baseline) TTFT={ttft:.4f}s  first_step={first_token_time:.4f}s  "
-                f"TPOT={tpot*1000.0:.3f}ms  tok/s={tok_s:.2f}  "
-                f"prefill={prefill_time:.4f}s  decode={decode_time:.4f}s  total={total_time:.4f}s"
-            )
-            if torch.cuda.is_available():
-                print(
-                    f"[METRIC] (Baseline) cuda_peak_alloc={_bytes_to_mb(peak_alloc):.2f}MB  "
-                    f"cuda_peak_reserved={_bytes_to_mb(peak_reserved):.2f}MB"
-                )
-
-        return PerplexityResult(
-            perplexity=ppl.item(),
-            runtime_sec=total_time,
-            prefill_sec=prefill_time,
-            first_token_latency_sec=first_token_time,
-        )
-
-    # -----------------------------
-    # StreamingLLM decode
-    # -----------------------------
-    past_key_values = None
-    prefill_len = min(max_cache_size, seq_len)
-
-    # To reduce per-step allocations:
-    #   - reuse attention_mask buffer (max_cache_size + 1)
-    #   - reuse position_ids buffer [B,1]
-    attn_mask_buf = None
-    pos_ids_buf = None
-
-    # decode_steps = seq_len - prefill_len
-    decode_steps = max(0, seq_len - prefill_len)
-
-    with streaming_wrapper.enable():
-        input_ids = encoded_dataset[:, :prefill_len]
-
-        if use_cuda_timing:
-            start_evt.record()
-        else:
-            prefill_start = time.perf_counter()
-
-        with torch.no_grad():
-            # Make RoPE positions explicit for prefill
-            position_ids = torch.arange(input_ids.shape[1], device=input_ids.device, dtype=torch.long).unsqueeze(0)
-            outputs = model(input_ids=input_ids, use_cache=True, position_ids=position_ids)
-
-        # PPL over prefill
-        logits = outputs.logits[:, :-1, :]
-        labels = input_ids[:, 1:]
-        if labels.numel() > 0:
             loss = F.cross_entropy(
-                logits.reshape(-1, logits.size(-1)),
-                labels.reshape(-1),
+                logits,
+                target,
                 reduction="sum",
             )
             total_nll += loss.item()
-            total_tokens += labels.numel()
-
-        past_key_values = outputs.past_key_values
-        kv0 = _sizeof_pkv_bytes(past_key_values)
-        kv_bytes_first = kv0 if kv_bytes_first is None else kv_bytes_first
-        kv_bytes_peak = max(kv_bytes_peak, kv0)
-
-        # wrapper.update timing
-        if use_cuda_timing:
-            update_start_evt.record()
-        t0u = None if use_cuda_timing else time.perf_counter()
-
-        past_key_values = streaming_wrapper.update(past_key_values)
-
-        if use_cuda_timing:
-            update_end_evt.record()
-        else:
-            update_time_sec += (time.perf_counter() - t0u)
-        update_calls += 1
-
-        kv1 = _sizeof_pkv_bytes(past_key_values)
-        kv_bytes_peak = max(kv_bytes_peak, kv1)
-
-        if use_cuda_timing:
-            prefill_end_evt.record()
-        else:
-            prefill_time = time.perf_counter() - prefill_start
-
-        # init buffers after we know batch size
-        B = input_ids.shape[0]
-        attn_mask_buf = torch.ones((B, max_cache_size + 1), device=input_ids.device, dtype=torch.long)
-        pos_ids_buf = torch.empty((B, 1), device=input_ids.device, dtype=torch.long)
-
-        if use_cuda_timing:
-            first_token_recorded = False
-        else:
-            first_token_recorded = False
-
-        iterator = range(prefill_len - 1, seq_len - 1)
-        if USE_TQDM:
-            iterator = tqdm(iterator, desc="Decoding")
-
-        decode_time_accum_sec = 0.0  # for non-cuda timing only
-        step_time_accum_sec = 0.0    # optional breakdown
-
-        for step_i, pos in enumerate(iterator, start=1):
-            current_input = encoded_dataset[:, pos:pos + 1]
-            target = encoded_dataset[:, pos + 1]
-
-            cache_len = _get_cache_len(past_key_values)
-            # Position id is "right after compressed logical cache"
-            # Fill buffer to avoid new tensor alloc each step.
-            pos_ids_buf.fill_(int(cache_len))
-
-            # attention_mask length = past_len + q_len (q_len=1)
-            # Use preallocated buffer and slice.
-            attn_mask = attn_mask_buf[:, : (cache_len + 1)]
-
-            if use_cuda_timing:
-                if not first_token_recorded:
-                    first_start_evt.record()
-                step_start_evt.record()
-
-            t0 = None
-            if not use_cuda_timing:
-                t0 = time.perf_counter()
-
-            with torch.no_grad():
-                outputs = model(
-                    input_ids=current_input,
-                    past_key_values=past_key_values,
-                    position_ids=pos_ids_buf,
-                    attention_mask=attn_mask,
-                    use_cache=True,
-                )
-
-            if use_cuda_timing:
-                step_end_evt.record()
-                if not first_token_recorded:
-                    first_end_evt.record()
-            else:
-                dt = time.perf_counter() - t0
-                decode_time_accum_sec += dt
-                step_time_accum_sec += dt
-
-            logits = outputs.logits[:, -1, :]
-            loss = F.cross_entropy(logits, target, reduction="sum")
-            total_nll += loss.item()
             total_tokens += target.numel()
-
-            past_key_values = outputs.past_key_values
-            kvb = _sizeof_pkv_bytes(past_key_values)
-            kv_bytes_peak = max(kv_bytes_peak, kvb)
-
-            # wrapper.update timing
-            if use_cuda_timing:
-                update_start_evt.record()
-            t0u = None if use_cuda_timing else time.perf_counter()
-
-            past_key_values = streaming_wrapper.update(past_key_values)
-
-            if use_cuda_timing:
-                update_end_evt.record()
-            else:
-                update_time_sec += (time.perf_counter() - t0u)
-            update_calls += 1
-
-            kvb2 = _sizeof_pkv_bytes(past_key_values)
-            kv_bytes_peak = max(kv_bytes_peak, kvb2)
 
             if not first_token_recorded:
                 first_token_recorded = True
+    else:
+        past_key_values = None
+        prefill_len = min(max_cache_size, seq_len)
+        with streaming_wrapper.enable():
+            input_ids = encoded_dataset[:, :prefill_len]
+            if use_cuda_timing:
+                start_evt.record()
+            with torch.no_grad():
+                position_ids = torch.arange(input_ids.shape[1], device=input_ids.device, dtype=torch.long).unsqueeze(0)
+                outputs = model(input_ids=input_ids, use_cache=True, position_ids=position_ids)
 
-            # Optional periodic metrics
-            if METRICS_EVERY > 0 and (step_i % METRICS_EVERY == 0):
-                if use_cuda_timing:
-                    torch.cuda.synchronize()
-                    step_ms = step_start_evt.elapsed_time(step_end_evt)
-                    upd_ms = update_start_evt.elapsed_time(update_end_evt)
-                    print(
-                        f"[METRIC] stream step={step_i} cache_len={cache_len} "
-                        f"step_ms={step_ms:.3f} update_ms={upd_ms:.3f} "
-                        f"kv_peak_mb={_bytes_to_mb(kv_bytes_peak):.2f}"
-                    )
-                else:
-                    print(
-                        f"[METRIC] stream step={step_i} cache_len={cache_len} "
-                        f"kv_peak_mb={_bytes_to_mb(kv_bytes_peak):.2f}"
+            logits = outputs.logits[:, :-1, :]
+            labels = input_ids[:, 1:]
+            if labels.numel() > 0:
+                loss = F.cross_entropy(
+                    logits.reshape(-1, logits.size(-1)),
+                    labels.reshape(-1),
+                    reduction="sum",
+                )
+                total_nll += loss.item()
+                total_tokens += labels.numel()
+
+            past_key_values = outputs.past_key_values
+            past_key_values = _do_update(past_key_values)
+            if use_cuda_timing:
+                prefill_end_evt.record()
+
+            if use_cuda_timing:
+                first_token_recorded = False
+            else:
+                prefill_time = time.perf_counter() - prefill_start
+                first_token_recorded = False
+
+            for pos in tqdm(range(prefill_len - 1, seq_len - 1), desc="Decoding"):
+                current_input = encoded_dataset[:, pos:pos + 1]
+                target = encoded_dataset[:, pos + 1]
+
+                if use_cuda_timing and not first_token_recorded:
+                    first_start_evt.record()
+                with torch.no_grad():
+                    cache_len = _get_cache_len(past_key_values)
+                    position_ids = torch.tensor([[cache_len]], device=current_input.device, dtype=torch.long)
+                    attention_mask = torch.ones(
+                        (current_input.shape[0], cache_len + current_input.shape[1]),
+                        device=current_input.device,
+                        dtype=torch.long,
                     )
 
-    # finalize timing
+                    outputs = model(
+                        input_ids=current_input,
+                        past_key_values=past_key_values,
+                        position_ids=position_ids,
+                        attention_mask=attention_mask,
+                        use_cache=True,
+                    )
+                if use_cuda_timing and not first_token_recorded:
+                    first_end_evt.record()
+
+                logits = outputs.logits[:, -1, :]
+                loss = F.cross_entropy(
+                    logits,
+                    target,
+                    reduction="sum",
+                )
+                total_nll += loss.item()
+                total_tokens += target.numel()
+                past_key_values = outputs.past_key_values
+                past_key_values = _do_update(past_key_values)
+
+                if not first_token_recorded:
+                    first_token_recorded = True
+
     if use_cuda_timing:
         end_evt.record()
         torch.cuda.synchronize()
@@ -865,52 +641,49 @@ def _compute_streaming_decode_perplexity(
         prefill_time = start_evt.elapsed_time(prefill_end_evt) / 1000.0
         if total_tokens > 0:
             first_token_time = first_start_evt.elapsed_time(first_end_evt) / 1000.0
-
-        # update time via events is only last measured; better estimate by wall time if you need precise.
-        # Here keep update_time_sec only from CPU-timing path.
-        decode_time = max(0.0, total_time - prefill_time)
     else:
         total_time = time.perf_counter() - total_start
-        decode_time = decode_time_accum_sec
 
-    # compute ppl
-    ppl = torch.exp(torch.tensor(total_nll / total_tokens))
-
-    # summary print
-    if METRICS:
-        # TTFT = prefill + first decode step
-        ttft = prefill_time + (first_token_time if first_token_time > 0 else 0.0)
-        # TPOT on decode phase only (exclude prefill)
-        tpot = (decode_time / max(1, decode_steps)) if decode_steps > 0 else float("nan")
-        tok_s = (1.0 / tpot) if (decode_steps > 0 and tpot > 0) else 0.0
-
-        peak_alloc = torch.cuda.max_memory_allocated() if torch.cuda.is_available() else 0
-        peak_reserved = torch.cuda.max_memory_reserved() if torch.cuda.is_available() else 0
-
-        # backend info
+    # -------- metrics summary --------
+    try:
         flash_env = os.environ.get("FLASH_SDPA", "unset")
+    except Exception:
+        flash_env = "unset"
 
+    decode_steps = max(0, seq_len - 1 - (prefill_len - 1))
+    tok_per_s = (decode_steps / total_time) if total_time > 0 else 0.0
+    tpot_ms = (total_time / decode_steps * 1000.0) if decode_steps > 0 else 0.0
+
+    if os.environ.get("PRINT_METRICS", "1") == "1":
+        tag = "Streaming" if streaming_wrapper is not None else "Baseline"
         print(
-            f"[METRIC] (Streaming) max_cache_size={max_cache_size} prefill_len={prefill_len} "
-            f"seq_len={seq_len} decode_steps={decode_steps} FLASH_SDPA={flash_env}"
+            f"[METRIC] ({tag}) max_cache_size={max_cache_size} prefill_len={prefill_len} seq_len={seq_len} "
+            f"decode_steps={decode_steps} FLASH_SDPA={flash_env}"
         )
-        print(
-            f"[METRIC] (Streaming) TTFT={ttft:.4f}s  first_step={first_token_time:.4f}s  "
-            f"TPOT={tpot*1000.0:.3f}ms  tok/s={tok_s:.2f}  "
-            f"prefill={prefill_time:.4f}s  decode={decode_time:.4f}s  total={total_time:.4f}s"
-        )
-        print(
-            f"[METRIC] (Streaming) KV_cache_first={_bytes_to_mb(kv_bytes_first or 0):.2f}MB  "
-            f"KV_cache_peak={_bytes_to_mb(kv_bytes_peak):.2f}MB  "
-            f"update_calls={update_calls} update_time_sec={update_time_sec:.4f}s "
-            f"(note: update_time_sec only tracked on CPU timing path)"
-        )
-        if torch.cuda.is_available():
+        if streaming_wrapper is None:
             print(
-                f"[METRIC] (Streaming) cuda_peak_alloc={_bytes_to_mb(peak_alloc):.2f}MB  "
-                f"cuda_peak_reserved={_bytes_to_mb(peak_reserved):.2f}MB"
+                f"[METRIC] ({tag}) TTFT={prefill_time:.4f}s  TPOT={tpot_ms:.3f}ms  tok/s={tok_per_s:.2f}  "
+                f"prefill={prefill_time:.4f}s  total={total_time:.4f}s"
             )
+        else:
+            extra = ""
+            if measure_update_sync:
+                avg_ms = (update_time_sec / update_calls * 1000.0) if update_calls > 0 else 0.0
+                extra = f"  update_total={update_time_sec:.4f}s  update_avg={avg_ms:.3f}ms  update_calls={update_calls}"
+            print(
+                f"[METRIC] ({tag}) TTFT={first_token_time if first_token_time else 0.0:.4f}s  "
+                f"TPOT={tpot_ms:.3f}ms  tok/s={tok_per_s:.2f}  prefill={prefill_time:.4f}s  total={total_time:.4f}s{extra}"
+            )
+            if kv_cache_first_mb is not None:
+                print(f"[METRIC] ({tag}) KV_cache_first={kv_cache_first_mb:.2f}MB  KV_cache_peak={kv_cache_peak_mb:.2f}MB")
 
+        if torch.cuda.is_available():
+            peak_alloc = torch.cuda.max_memory_allocated() / (1024**2)
+            peak_res = torch.cuda.max_memory_reserved() / (1024**2)
+            print(f"[METRIC] ({tag}) cuda_peak_alloc={peak_alloc:.2f}MB  cuda_peak_reserved={peak_res:.2f}MB")
+    # -------- end metrics summary --------
+
+    ppl = torch.exp(torch.tensor(total_nll / total_tokens))
     return PerplexityResult(
         perplexity=ppl.item(),
         runtime_sec=total_time,
