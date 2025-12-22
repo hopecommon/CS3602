@@ -47,6 +47,31 @@ cp .env.example .env
 
 ## 2. 推荐流程（当前主入口）
 
+### 2.1 Split Backend 配置 (Flash Prefill / Streaming Decode)
+
+新版支持将推理过程的后端进行拆分：**Prefill 阶段启用 Flash Attention 加速，Decode 阶段仅使用 StreamingLLM 压缩（禁用 Flash）**。这是目前的推荐配置，可避免 Flash Attention 在逐 token 解码时与 Streaming 策略产生潜在冲突。
+
+**Split 模式 (推荐: Prefill Flash ON / Decode Flash OFF)**
+```bash
+# 使用便捷参数 (默认开启 split)
+python experiments/eval_streaming_llm.py --mode streaming --streaming-mode ours --flash-split
+
+# 或者显式指定
+python experiments/eval_streaming_llm.py --mode streaming --streaming-mode ours --flash-prefill 1 --flash-decode 0
+```
+
+**Streaming-Only 模式 (全关闭: Prefill OFF / Decode OFF)**
+用于验证 Flash Attention 是否对 Streaming 压缩有副作用，或者作为纯粹的兼容性基线：
+```bash
+python experiments/eval_streaming_llm.py --mode streaming --streaming-mode ours --flash-prefill 0 --flash-decode 0
+```
+
+**Flash-Only (Baseline 模式)**
+仅测试基线下的 Flash Attention 加速效果：
+```bash
+python experiments/eval_streaming_llm.py --mode baseline --flash-prefill 1
+```
+
 **最快复现**：`run_fixed_evaluation.sh`（decode-loop评估，对应 README 主表格）
 ```bash
 chmod +x run_fixed_evaluation.sh

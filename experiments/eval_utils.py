@@ -437,6 +437,8 @@ def compute_perplexity(
     use_streaming: bool = False,
     streaming_wrapper=None,
     max_cache_size: Optional[int] = None,
+    flash_prefill: bool = True,
+    flash_decode: bool = False,
 ) -> PerplexityResult:
     """
     计算 perplexity
@@ -452,6 +454,8 @@ def compute_perplexity(
             device=device,
             max_cache_size=max_cache_size,
             streaming_wrapper=wrapper,
+            flash_prefill=flash_prefill,
+            flash_decode=flash_decode,
         )
 
     nlls = []
@@ -509,6 +513,8 @@ def _compute_streaming_decode_perplexity(
     device: torch.device,
     max_cache_size: int,
     streaming_wrapper=None,
+    flash_prefill: bool = True,
+    flash_decode: bool = False,
 ) -> PerplexityResult:
     """
     使用解码式评估 (逐 token) 计算 PPL 和时间
@@ -573,8 +579,12 @@ def _compute_streaming_decode_perplexity(
 
         if use_cuda_timing:
             start_evt.record()
-        with torch.no_grad():
-            outputs = model(input_ids=input_ids, use_cache=False)
+        
+        # Prefill Context
+        with sdp_kernel(enable_flash=flash_prefill, enable_mem_efficient=True, enable_math=True):
+            with torch.no_grad():
+                outputs = model(input_ids=input_ids, use_cache=False)
+        
         if use_cuda_timing:
             prefill_end_evt.record()
 
@@ -617,8 +627,10 @@ def _compute_streaming_decode_perplexity(
             if not use_cuda_timing:
                 t0 = time.perf_counter()
 
-            with torch.no_grad():
-                outputs = model(input_ids=context, use_cache=False)
+            # Decode Context
+            with sdp_kernel(enable_flash=flash_decode, enable_mem_efficient=True, enable_math=True):
+                with torch.no_grad():
+                    outputs = model(input_ids=context, use_cache=False)
 
             if use_cuda_timing:
                 step_end_evt.record()
@@ -712,10 +724,12 @@ def _compute_streaming_decode_perplexity(
         else:
             prefill_start = time.perf_counter()
 
-        with torch.no_grad():
-            # Make RoPE positions explicit for prefill
-            position_ids = torch.arange(input_ids.shape[1], device=input_ids.device, dtype=torch.long).unsqueeze(0)
-            outputs = model(input_ids=input_ids, use_cache=True, position_ids=position_ids)
+        # Prefill Context
+        with sdp_kernel(enable_flash=flash_prefill, enable_mem_efficient=True, enable_math=True):
+            with torch.no_grad():
+                # Make RoPE positions explicit for prefill
+                position_ids = torch.arange(input_ids.shape[1], device=input_ids.device, dtype=torch.long).unsqueeze(0)
+                outputs = model(input_ids=input_ids, use_cache=True, position_ids=position_ids)
 
         # PPL over prefill
         logits = outputs.logits[:, :-1, :]
@@ -794,14 +808,16 @@ def _compute_streaming_decode_perplexity(
             if not use_cuda_timing:
                 t0 = time.perf_counter()
 
-            with torch.no_grad():
-                outputs = model(
-                    input_ids=current_input,
-                    past_key_values=past_key_values,
-                    position_ids=pos_ids_buf,
-                    attention_mask=attn_mask,
-                    use_cache=True,
-                )
+            # Decode Context
+            with sdp_kernel(enable_flash=flash_decode, enable_mem_efficient=True, enable_math=True):
+                with torch.no_grad():
+                    outputs = model(
+                        input_ids=current_input,
+                        past_key_values=past_key_values,
+                        position_ids=pos_ids_buf,
+                        attention_mask=attn_mask,
+                        use_cache=True,
+                    )
 
             if use_cuda_timing:
                 step_end_evt.record()
