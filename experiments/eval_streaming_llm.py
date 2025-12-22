@@ -146,11 +146,40 @@ def parse_args():
         help="输出文件路径"
     )
     
+    # Flash Attention 分段控制
+    parser.add_argument(
+        "--flash-prefill",
+        type=int,
+        default=1,
+        help="Prefill 阶段是否开启 Flash Attention (0/1)"
+    )
+    parser.add_argument(
+        "--flash-decode",
+        type=int,
+        default=0,
+        help="Decode 阶段是否开启 Flash Attention (0/1)"
+    )
+    parser.add_argument(
+        "--flash-split",
+        action="store_true",
+        help="是否启用分段加速策略 (Prefill=1, Decode=0), 覆盖上述设置"
+    )
+    
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
+
+    # 处理 Flash Attention 配置
+    if args.flash_split:
+        flash_prefill = True
+        flash_decode = False
+        print("提示: 已启用 --flash-split, 强制设置 flash_prefill=True, flash_decode=False")
+    else:
+        flash_prefill = bool(args.flash_prefill)
+        flash_decode = bool(args.flash_decode)
+
     target_cache = args.n_sink + args.window_size
     if args.max_length < target_cache:
         print(
@@ -182,6 +211,8 @@ def main():
     print(f"n_sink: {args.n_sink}")
     print(f"window_size: {args.window_size}")
     print(f"模式: {args.mode}")
+    print(f"Flash Prefill: {flash_prefill}")
+    print(f"Flash Decode: {flash_decode}")
     print(f"{'='*60}\n")
 
     streaming_cache_name = (
@@ -233,6 +264,8 @@ def main():
             stride=args.stride,
             use_streaming=False,
             max_cache_size=args.n_sink + args.window_size,
+            flash_prefill=flash_prefill,
+            flash_decode=flash_decode,
         )
         baseline_ppl = baseline_stats.perplexity
         baseline_time = baseline_stats.runtime_sec
@@ -271,6 +304,8 @@ def main():
             stride=args.stride,
             use_streaming=False,
             max_cache_size=args.n_sink + args.window_size,
+            flash_prefill=flash_prefill,
+            flash_decode=flash_decode,
         )
         baseline_ppl = baseline_stats.perplexity
         baseline_time = baseline_stats.runtime_sec
@@ -349,6 +384,8 @@ def main():
             use_streaming=True,
             streaming_wrapper=streaming_wrapper,
             max_cache_size=args.n_sink + args.window_size,
+            flash_prefill=flash_prefill,
+            flash_decode=flash_decode,
         )
         streaming_ppl = streaming_stats.perplexity
         streaming_time = streaming_stats.runtime_sec

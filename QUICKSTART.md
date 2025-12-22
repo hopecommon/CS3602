@@ -139,6 +139,39 @@ RUN_MIT_OFFICIAL_BENCHMARK=1 MIT_BENCH_PYTHON=/path/to/mit_env/bin/python ./run_
 python experiments/test_streaming_llm.py  # smoke test
 ```
 
+## 3.1 进阶实验：Flash Attention 分段加速
+
+为了解决 Flash Attention 在 Decode 阶段可能与 StreamingLLM 的 KV 压缩机制冲突导致 PPL 上升的问题，我们实现了分段加速策略：**Prefill 阶段启用 Flash Attention，Decode 阶段关闭 Flash Attention**。
+
+**启用分段加速（推荐）**：
+```bash
+python experiments/eval_streaming_llm.py \
+  --mode streaming \
+  --streaming-mode ours \
+  --flash-split \
+  --output results/streaming_llm/wikitext_split_result.json
+```
+
+**完全关闭 Flash Attention（纯 Streaming 模式）**：
+```bash
+python experiments/eval_streaming_llm.py \
+  --mode streaming \
+  --streaming-mode ours \
+  --flash-prefill 0 \
+  --flash-decode 0 \
+  --output results/streaming_llm/wikitext_no_flash_result.json
+```
+
+**全开 Flash Attention（仅用于调试/对比）**：
+```bash
+python experiments/eval_streaming_llm.py \
+  --mode streaming \
+  --streaming-mode ours \
+  --flash-prefill 1 \
+  --flash-decode 1 \
+  --output results/streaming_llm/wikitext_full_flash_result.json
+```
+
 ## 4. Legacy 脚本（仅限对比 / 参考）
 
 1. `run_everything.sh`：旧版一键实验（baseline + streaming + kvpress + ablations），依然可用但结果生成方式与当前推荐流程不同，现标注为 **Legacy**。
