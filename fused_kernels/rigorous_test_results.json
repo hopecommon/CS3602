@@ -1,0 +1,214 @@
+{
+  "kernel_correctness": {
+    "passed": true,
+    "details": {
+      "Contiguous": {
+        "passed": true,
+        "max_abs_error": 0.0,
+        "max_rel_error": NaN,
+        "a_contiguous": true,
+        "b_contiguous": true
+      },
+      "Permuted": {
+        "passed": true,
+        "max_abs_error": 0.0,
+        "max_rel_error": NaN,
+        "a_contiguous": false,
+        "b_contiguous": false
+      },
+      "View": {
+        "passed": true,
+        "max_abs_error": 0.0,
+        "max_rel_error": NaN,
+        "a_contiguous": true,
+        "b_contiguous": true
+      },
+      "Sliced": {
+        "passed": true,
+        "max_abs_error": 0.0,
+        "max_rel_error": NaN,
+        "a_contiguous": true,
+        "b_contiguous": true
+      }
+    }
+  },
+  "hidden_states_consistency": {
+    "passed": true,
+    "details": {
+      "layer_0": {
+        "max_abs_error": 0.0,
+        "max_rel_error": 0.0,
+        "passed": true
+      },
+      "layer_1": {
+        "max_abs_error": 0.0,
+        "max_rel_error": 0.0,
+        "passed": true
+      },
+      "layer_2": {
+        "max_abs_error": 0.0,
+        "max_rel_error": NaN,
+        "passed": true
+      },
+      "layer_3": {
+        "max_abs_error": 0.0,
+        "max_rel_error": NaN,
+        "passed": true
+      },
+      "layer_4": {
+        "max_abs_error": 0.0,
+        "max_rel_error": NaN,
+        "passed": true
+      },
+      "layer_5": {
+        "max_abs_error": 0.0,
+        "max_rel_error": 0.0,
+        "passed": true
+      },
+      "layer_6": {
+        "max_abs_error": 0.0,
+        "max_rel_error": 0.0,
+        "passed": true
+      },
+      "layer_7": {
+        "max_abs_error": 0.0,
+        "max_rel_error": NaN,
+        "passed": true
+      },
+      "layer_8": {
+        "max_abs_error": 0.0,
+        "max_rel_error": NaN,
+        "passed": true
+      },
+      "layer_9": {
+        "max_abs_error": 0.0,
+        "max_rel_error": 0.0,
+        "passed": true
+      },
+      "layer_10": {
+        "max_abs_error": 0.0,
+        "max_rel_error": 0.0,
+        "passed": true
+      },
+      "layer_11": {
+        "max_abs_error": 0.0,
+        "max_rel_error": NaN,
+        "passed": true
+      },
+      "layer_12": {
+        "max_abs_error": 0.0,
+        "max_rel_error": 0.0,
+        "passed": true
+      },
+      "layer_13": {
+        "max_abs_error": 0.0,
+        "max_rel_error": NaN,
+        "passed": true
+      },
+      "layer_14": {
+        "max_abs_error": 0.0,
+        "max_rel_error": NaN,
+        "passed": true
+      },
+      "layer_15": {
+        "max_abs_error": 0.0,
+        "max_rel_error": 0.0,
+        "passed": true
+      },
+      "layer_16": {
+        "max_abs_error": 0.0,
+        "max_rel_error": NaN,
+        "passed": true
+      },
+      "layer_17": {
+        "max_abs_error": 0.0,
+        "max_rel_error": 0.0,
+        "passed": true
+      },
+      "layer_18": {
+        "max_abs_error": 0.0,
+        "max_rel_error": NaN,
+        "passed": true
+      },
+      "layer_19": {
+        "max_abs_error": 0.0,
+        "max_rel_error": 0.0,
+        "passed": true
+      },
+      "layer_20": {
+        "max_abs_error": 0.0,
+        "max_rel_error": 0.0,
+        "passed": true
+      },
+      "layer_21": {
+        "max_abs_error": 0.0,
+        "max_rel_error": NaN,
+        "passed": true
+      },
+      "layer_22": {
+        "max_abs_error": 0.0,
+        "max_rel_error": 0.0,
+        "passed": true
+      },
+      "layer_23": {
+        "max_abs_error": 0.0,
+        "max_rel_error": NaN,
+        "passed": true
+      },
+      "layer_24": {
+        "max_abs_error": 0.0,
+        "max_rel_error": 0.0,
+        "passed": true
+      },
+      "layer_25": {
+        "max_abs_error": 0.0,
+        "max_rel_error": NaN,
+        "passed": true
+      },
+      "layer_26": {
+        "max_abs_error": 0.0,
+        "max_rel_error": NaN,
+        "passed": true
+      },
+      "layer_27": {
+        "max_abs_error": 0.0,
+        "max_rel_error": NaN,
+        "passed": true
+      },
+      "layer_28": {
+        "max_abs_error": 0.0,
+        "max_rel_error": NaN,
+        "passed": true
+      },
+      "layer_29": {
+        "max_abs_error": 0.0,
+        "max_rel_error": NaN,
+        "passed": true
+      },
+      "layer_30": {
+        "max_abs_error": 0.0,
+        "max_rel_error": 0.0,
+        "passed": true
+      },
+      "layer_31": {
+        "max_abs_error": 0.0,
+        "max_rel_error": 0.0,
+        "passed": true
+      },
+      "layer_32": {
+        "max_abs_error": 0.0,
+        "max_rel_error": 0.0,
+        "passed": true
+      }
+    }
+  },
+  "generation_output": {
+    "passed": true,
+    "details": {
+      "tokens_match": true,
+      "text_match": true,
+      "original_text": "The quick brown fox jumps over the lazy dog.\" \"The lazy dog",
+      "fused_text": "The quick brown fox jumps over the lazy dog.\" \"The lazy dog"
+    }
+  }
+}
