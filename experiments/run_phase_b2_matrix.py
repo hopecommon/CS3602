@@ -30,6 +30,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--baseline-static", type=Path, default=None)
     parser.add_argument("--fixed-baseline-dir", type=Path, default=Path("results/baselines"))
     parser.add_argument("--skip-static", action="store_true")
+    parser.add_argument("--skip-no-prune", action="store_true")
     parser.add_argument("--output-dir", type=Path, default=Path("results/phase_b2"))
     parser.add_argument("--no-skip-existing", action="store_true")
     return parser.parse_args()
@@ -152,11 +153,14 @@ def main() -> None:
     matrix = [
         ("lazy_c32_dynamic", 32, None),
         ("lazy_c16_dynamic", 16, None),
+        ("no_prune_dynamic", 0, None),
         ("lazy_c32_static", 32, "static"),
         ("lazy_c16_static", 16, "static"),
         ("strict_dynamic", 1, None),
         ("strict_static", 1, "static"),
     ]
+    if args.skip_no_prune:
+        matrix = [item for item in matrix if item[1] != 0]
 
     rows: list[dict[str, Any]] = []
     baseline_dynamic = _run_baseline(

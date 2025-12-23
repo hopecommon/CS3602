@@ -44,6 +44,8 @@ class StreamingLLMWrapper:
         window_size: int = 1024,
         cache: Optional[Any] = None,
         compress_every: int = 4,
+        max_drop: int = 0,
+        cache_slack: int = 0,
         overlap: int = 0,
         refresh_budget: int = 0,
         refresh_policy: str = "none",
@@ -63,12 +65,26 @@ class StreamingLLMWrapper:
         self.cache_name = type(self.cache).__name__
         self._supports_slice_api = hasattr(self.cache, "get_slice_info")
         # Allow KV to grow by up to (compress_every - 1) tokens before pruning.
-        self.compress_every = max(1, int(compress_every))
+        # compress_every=0 disables pruning (no eviction).
+        compress_every = int(compress_every)
+        if compress_every < 0:
+            raise ValueError(f"compress_every must be >= 0, got {compress_every}")
+        self.compress_every = compress_every
+        max_drop = int(max_drop)
+        if max_drop < 0:
+            raise ValueError(f"max_drop must be >= 0, got {max_drop}")
+        self.max_drop = max_drop
+        cache_slack = int(cache_slack)
+        if cache_slack < 0:
+            raise ValueError(f"cache_slack must be >= 0, got {cache_slack}")
+        self.cache_slack = cache_slack
         self.reuse_rotation = reuse_rotation
 
         self._enabled = False
         self._layer_infos = self._collect_layer_infos()
-        self._cache_capacity = self._infer_cache_capacity() + self.refresh_budget
+        self._soft_capacity = self._infer_cache_capacity() + self.refresh_budget
+        self._hard_capacity = self._soft_capacity + self.cache_slack
+        self._cache_capacity = self._hard_capacity
         self._layer_key_buffers: List[Optional[torch.Tensor]] = []
         self._layer_value_buffers: List[Optional[torch.Tensor]] = []
         self._shift_rotation_cache: dict = {}
@@ -130,21 +146,35 @@ class StreamingLLMWrapper:
         batch_size = first_layer.keys.shape[0]
         seq_len = first_layer.keys.shape[2]
 
-        cache_limit = self._cache_capacity
-        overflow = seq_len - cache_limit
-        if overflow <= 0:
+        soft_limit = self._soft_capacity
+        hard_limit = self._hard_capacity
+        if self.compress_every == 0:
             self._step += 1
             return
-        if overflow < self.compress_every:
+
+        overflow_soft = seq_len - soft_limit
+        if overflow_soft <= 0:
+            self._step += 1
+            return
+        if overflow_soft < self.compress_every:
             self._step += 1
             return
 
         indices = None
         slice_info = None
+        use_middle_refresh = self.refresh_policy == "middle"
+        if self.max_drop > 0:
+            target_len = max(seq_len - self.max_drop, soft_limit)
+            target_len = min(target_len, hard_limit)
+        else:
+            target_len = soft_limit
         if self._supports_slice_api:
-            slice_info = self.cache.get_slice_info(seq_len)
-            sink_count, recent_start, _ = slice_info
-            kept = sink_count + max(0, seq_len - recent_start)
+            sink_count = min(self.n_sink, seq_len)
+            recent_keep = max(0, target_len - sink_count)
+            recent_keep = min(recent_keep, max(0, seq_len - sink_count))
+            recent_start_base = seq_len - recent_keep
+            kept = sink_count + recent_keep
+            slice_info = (sink_count, recent_start_base, seq_len)
         else:
             indices = self.cache.get_keep_indices(seq_len, device)
             if indices is None:
@@ -152,14 +182,25 @@ class StreamingLLMWrapper:
             old_positions_1d = indices.to(dtype=torch.long)
             kept = int(old_positions_1d.numel())
 
-        refresh_indices = self._select_refresh_indices(
-            sink_count=sink_count,
-            recent_start=recent_start,
-            seq_len=seq_len,
-            device=device,
-        ) if self._supports_slice_api else None
+        refresh_indices = None
+        if self._supports_slice_api:
+            window_count = max(0, seq_len - recent_start_base)
+            refresh_budget_cap = window_count if use_middle_refresh else None
+            refresh_indices = self._select_refresh_indices(
+                sink_count=sink_count,
+                recent_start=recent_start_base,
+                seq_len=seq_len,
+                device=device,
+                max_budget=refresh_budget_cap,
+            )
         if refresh_indices is not None and refresh_indices.numel() > 0:
-            kept += int(refresh_indices.numel())
+            if use_middle_refresh:
+                refresh_count = int(refresh_indices.numel())
+                refresh_count = min(refresh_count, window_count)
+                refresh_indices = refresh_indices[:refresh_count]
+                kept = sink_count + window_count
+            else:
+                kept += int(refresh_indices.numel())
             if indices is not None:
                 indices = torch.cat([indices, refresh_indices], dim=0)
 
@@ -168,22 +209,67 @@ class StreamingLLMWrapper:
             value_states = layer.values
 
             if self._supports_slice_api and slice_info is not None:
-                sink_count, recent_start, total_len = slice_info
-                kept_base = sink_count + max(0, total_len - recent_start)
+                sink_count, recent_start_base, total_len = slice_info
+                window_count = max(0, total_len - recent_start_base)
                 refresh_count = int(refresh_indices.numel()) if refresh_indices is not None else 0
-                kept = kept_base + refresh_count
+                if use_middle_refresh and refresh_count > 0:
+                    refresh_count = min(refresh_count, window_count)
+                    refresh_indices = refresh_indices[:refresh_count]
+                    recent_keep = max(0, window_count - refresh_count)
+                    recent_start = total_len - recent_keep
+                    kept = sink_count + refresh_count + recent_keep
+                else:
+                    recent_keep = window_count
+                    recent_start = recent_start_base
+                    kept = sink_count + recent_keep + refresh_count
+
                 buffer_key = self._get_or_init_buffer(
                     self._layer_key_buffers, layer_idx, key_states
-                )
-                compressed_key = self._slice_cache_tensor(
-                    key_states, sink_count, recent_start, total_len, kept_base, buffer_key
                 )
                 buffer_value = self._get_or_init_buffer(
                     self._layer_value_buffers, layer_idx, value_states
                 )
-                compressed_value = self._slice_cache_tensor(
-                    value_states, sink_count, recent_start, total_len, kept_base, buffer_value
-                )
+                if use_middle_refresh and refresh_count > 0:
+                    view_key = buffer_key[:, :, :kept, :]
+                    view_value = buffer_value[:, :, :kept, :]
+                    offset = 0
+                    if sink_count > 0:
+                        view_key[:, :, :sink_count, :].copy_(key_states[:, :, :sink_count, :])
+                        view_value[:, :, :sink_count, :].copy_(value_states[:, :, :sink_count, :])
+                        offset = sink_count
+                    refresh_key = torch.index_select(key_states, 2, refresh_indices)
+                    refresh_value = torch.index_select(value_states, 2, refresh_indices)
+                    new_positions_1d = torch.arange(
+                        offset,
+                        offset + refresh_count,
+                        device=view_key.device,
+                        dtype=torch.long,
+                    )
+                    layer_info = self._layer_infos[min(layer_idx, len(self._layer_infos) - 1)]
+                    refresh_key = self._rerotate_refresh_keys(
+                        refresh_key,
+                        old_positions_1d=refresh_indices.to(dtype=torch.long),
+                        new_positions_1d=new_positions_1d,
+                        layer_info=layer_info,
+                    )
+                    view_key[:, :, offset : offset + refresh_count, :].copy_(refresh_key)
+                    view_value[:, :, offset : offset + refresh_count, :].copy_(refresh_value)
+                    offset += refresh_count
+                    if recent_start < total_len and offset < kept:
+                        recent_slice = key_states[:, :, recent_start:total_len, :]
+                        view_key[:, :, offset:kept, :].copy_(recent_slice[:, :, : kept - offset, :])
+                        recent_value = value_states[:, :, recent_start:total_len, :]
+                        view_value[:, :, offset:kept, :].copy_(recent_value[:, :, : kept - offset, :])
+                    compressed_key = view_key
+                    compressed_value = view_value
+                else:
+                    kept_base = sink_count + recent_keep
+                    compressed_key = self._slice_cache_tensor(
+                        key_states, sink_count, recent_start, total_len, kept_base, buffer_key
+                    )
+                    compressed_value = self._slice_cache_tensor(
+                        value_states, sink_count, recent_start, total_len, kept_base, buffer_value
+                    )
             else:
                 compressed_key = torch.index_select(key_states, 2, indices).contiguous()
                 compressed_value = torch.index_select(value_states, 2, indices).contiguous()
@@ -197,7 +283,8 @@ class StreamingLLMWrapper:
                     and layer_info.rotary_ndims
                     and recent_start < total_len
                 ):
-                    shift = int(sink_count - recent_start)
+                    shift_start = sink_count + (refresh_count if use_middle_refresh else 0)
+                    shift = int(shift_start - recent_start)
                     if shift != 0:
                         rotary_dim = int(layer_info.rotary_ndims)
                         half = min(rotary_dim, compressed_key.shape[-1]) // 2
@@ -222,12 +309,12 @@ class StreamingLLMWrapper:
                             cos, sin, rotary_dim = cached
                             apply_rotary_shift_inplace(
                                 compressed_key,
-                                start_index=sink_count,
+                                start_index=shift_start,
                                 cos=cos,
                                 sin=sin,
                                 rotary_dim=rotary_dim,
                             )
-                if refresh_count > 0 and refresh_indices is not None:
+                if refresh_count > 0 and refresh_indices is not None and not use_middle_refresh:
                     refresh_key = torch.index_select(key_states, 2, refresh_indices)
                     refresh_value = torch.index_select(value_states, 2, refresh_indices)
                     new_positions_1d = torch.arange(
@@ -293,8 +380,10 @@ class StreamingLLMWrapper:
             "seq_len": seq_len,
             "kept": kept,
             "dropped": dropped,
-            "overflow": overflow,
+            "overflow": overflow_soft,
             "compress_every": self.compress_every,
+            "max_drop": self.max_drop,
+            "cache_slack": self.cache_slack,
         }
         self._prune_events.append(self._last_prune)
         self._step += 1
@@ -354,6 +443,7 @@ class StreamingLLMWrapper:
         recent_start: int,
         seq_len: int,
         device: torch.device,
+        max_budget: Optional[int] = None,
     ) -> Optional[torch.Tensor]:
         if self.refresh_budget <= 0:
             return None
@@ -365,9 +455,11 @@ class StreamingLLMWrapper:
         if drop_len <= 0:
             return None
         budget = min(self.refresh_budget, drop_len)
+        if max_budget is not None:
+            budget = min(budget, max_budget)
         if budget <= 0:
             return None
-        if self.refresh_policy == "uniform":
+        if self.refresh_policy in {"uniform", "middle"}:
             if budget == 1:
                 index = sink_count + drop_len // 2
                 return torch.tensor([index], device=device, dtype=torch.long)
@@ -504,6 +596,8 @@ class StreamingLLMWrapper:
             f"  n_sink={self.n_sink},\n"
             f"  window_size={self.window_size},\n"
             f"  compress_every={self.compress_every},\n"
+            f"  max_drop={self.max_drop},\n"
+            f"  cache_slack={self.cache_slack},\n"
             f"  enabled={self._enabled}\n"
             f")"
         )

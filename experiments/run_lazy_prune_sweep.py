@@ -21,7 +21,7 @@ def parse_args() -> argparse.Namespace:
         "--compress-every",
         type=int,
         nargs="+",
-        default=[4, 16, 32],
+        default=[4, 8, 16, 32, 64, 128],
         help="Prune interval (tokens)"
     )
     parser.add_argument(
@@ -29,6 +29,12 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=2048,
         help="Streaming window size"
+    )
+    parser.add_argument(
+        "--total-window",
+        type=int,
+        default=None,
+        help="Optional total window cap (window + sink). If set, overrides window-size."
     )
     parser.add_argument(
         "--n-sink",
@@ -231,6 +237,8 @@ def _write_csv(rows: list[dict[str, Any]], output_path: Path) -> None:
 
 def main() -> None:
     args = parse_args()
+    if args.total_window is not None:
+        args.window_size = max(1, int(args.total_window) - int(args.n_sink))
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     summary_entries: list[dict[str, Any]] = []

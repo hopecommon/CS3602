@@ -458,6 +458,11 @@ def _compute_streaming_decode_perplexity(
     first_token_time = 0.0
 
     static_cache = None
+    if cache_implementation == "static" and streaming_wrapper is not None:
+        raise RuntimeError(
+            "StaticCache is not compatible with streaming cache pruning "
+            "(past_key_values are resized). Use dynamic cache or skip static."
+        )
     if cache_implementation == "static":
         try:
             from transformers.cache_utils import StaticCache

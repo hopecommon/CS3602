@@ -135,7 +135,7 @@ def parse_args():
         "--refresh-policy",
         type=str,
         default="none",
-        choices=["none", "uniform"],
+        choices=["none", "uniform", "middle"],
         help="refresh 采样策略"
     )
     parser.add_argument(
@@ -150,6 +150,18 @@ def parse_args():
         type=int,
         default=4,
         help="StreamingLLM: 每隔多少 token 执行一次 KV 裁剪"
+    )
+    parser.add_argument(
+        "--max-drop",
+        type=int,
+        default=0,
+        help="StreamingLLM: 每次裁剪最多丢弃多少 token (0=不限制)"
+    )
+    parser.add_argument(
+        "--cache-slack",
+        type=int,
+        default=0,
+        help="StreamingLLM: 允许缓存暂时超过窗口的额外 token 数"
     )
     parser.add_argument(
         "--streaming-mode",
@@ -224,6 +236,8 @@ def main():
     print(f"refresh_budget: {args.refresh_budget}")
     print(f"refresh_policy: {args.refresh_policy}")
     print(f"compress_every: {args.compress_every}")
+    print(f"max_drop: {args.max_drop}")
+    print(f"cache_slack: {args.cache_slack}")
     print(f"模式: {args.mode}")
     print(f"{'='*60}\n")
 
@@ -371,6 +385,8 @@ def main():
                 "refresh_budget": args.refresh_budget,
                 "refresh_policy": args.refresh_policy,
                 "compress_every": args.compress_every,
+                "max_drop": args.max_drop,
+                "cache_slack": args.cache_slack,
                 "implementation": args.streaming_mode,
                 "cache_type": streaming_cache_name,
                 "max_cache_size": target_cache,
@@ -411,6 +427,8 @@ def main():
             refresh_budget=args.refresh_budget,
             refresh_policy=args.refresh_policy,
             compress_every=args.compress_every,
+            max_drop=args.max_drop,
+            cache_slack=args.cache_slack,
             cache=cache_impl
         )
         streaming_cache_name = streaming_wrapper.cache_name
@@ -467,6 +485,8 @@ def main():
             "refresh_budget": args.refresh_budget,
             "refresh_policy": args.refresh_policy,
             "compress_every": args.compress_every,
+            "max_drop": args.max_drop,
+            "cache_slack": args.cache_slack,
             "implementation": args.streaming_mode,
             "cache_type": streaming_cache_name,
             "max_cache_size": target_cache,
