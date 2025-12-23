@@ -38,12 +38,28 @@ def _load_json_entries(path: Path) -> list[dict]:
             entries.append(json.loads(line))
         return entries
 
+
+def _tqdm(iterable, **kwargs):
+    try:
+        from tqdm import tqdm
+    except ImportError:
+        return iterable
+    return tqdm(iterable, **kwargs)
+
+
+def tqdm_wrap(iterable, **kwargs):
+    """Shared tqdm wrapper for experiments."""
+    return _tqdm(iterable, **kwargs)
+
 @dataclass
 class PerplexityResult:
     perplexity: float
     runtime_sec: float
     prefill_sec: float
     first_token_latency_sec: float
+    decode_tokens: int
+    decode_time_sec: float
+    tpot_ms: float
 
     def __iter__(self):
         yield self.perplexity
@@ -270,6 +286,29 @@ def load_tokenized_dataset(
     return input_ids
 
 
+def load_fixed_baseline(dataset_name: str, baseline_dir: Optional[Path] = None) -> Optional[Dict[str, Any]]:
+    """
+    Load a fixed baseline JSON from disk if available.
+
+    Expects files like:
+      results/baselines/wikitext_baseline_avg.json
+      results/baselines/pg19_baseline_avg.json
+    """
+    if baseline_dir is None:
+        baseline_dir = Path("results/baselines")
+    name = dataset_name.lower()
+    if name.startswith("wikitext"):
+        filename = "wikitext_baseline_avg.json"
+    elif name.startswith("pg19"):
+        filename = "pg19_baseline_avg.json"
+    else:
+        return None
+    path = baseline_dir / filename
+    if not path.exists():
+        return None
+    return json.loads(path.read_text())
+
+
 def compute_perplexity(
     model,
     encoded_dataset: Tensor,
@@ -279,6 +318,7 @@ def compute_perplexity(
     use_streaming: bool = False,
     streaming_wrapper = None,
     max_cache_size: Optional[int] = None,
+    cache_implementation: Optional[str] = None,
 ) -> PerplexityResult:
     """
     计算 perplexity
@@ -308,6 +348,7 @@ def compute_perplexity(
             device=device,
             max_cache_size=max_cache_size,
             streaming_wrapper=wrapper,
+            cache_implementation=cache_implementation,
         )
 
     nlls = []
@@ -328,8 +369,14 @@ def compute_perplexity(
         from contextlib import nullcontext
         context = nullcontext()
     
+    total_steps = (seq_len + stride - 1) // stride
     with context:
-        for start_idx in range(0, seq_len, stride):
+        for start_idx in _tqdm(
+            range(0, seq_len, stride),
+            total=total_steps,
+            desc="PPL stride",
+            unit="step",
+        ):
             begin_loc = max(start_idx + stride - max_length, 0)
             end_loc = min(start_idx + stride, seq_len)
             trg_len = end_loc - start_idx
@@ -358,6 +405,9 @@ def compute_perplexity(
         runtime_sec=total_time,
         prefill_sec=prefill_time,
         first_token_latency_sec=0.0,
+        decode_tokens=total_tokens,
+        decode_time_sec=total_time - prefill_time,
+        tpot_ms=(total_time - prefill_time) / max(total_tokens, 1) * 1000.0,
     )
 
 
@@ -367,6 +417,7 @@ def _compute_streaming_decode_perplexity(
     device: torch.device,
     max_cache_size: int,
     streaming_wrapper = None,
+    cache_implementation: Optional[str] = None,
 ) -> PerplexityResult:
     """
     使用解码式评估 (逐 token) 计算 PPL 和时间
@@ -403,7 +454,23 @@ def _compute_streaming_decode_perplexity(
 
     total_nll = 0.0
     total_tokens = 0
+    decode_tokens = 0
     first_token_time = 0.0
+
+    static_cache = None
+    if cache_implementation == "static":
+        try:
+            from transformers.cache_utils import StaticCache
+        except ImportError as exc:
+            raise RuntimeError("StaticCache is not available in this transformers version.") from exc
+        dtype = next(model.parameters()).dtype
+        static_cache = StaticCache(
+            config=model.config,
+            max_batch_size=1,
+            max_cache_len=max_cache_size,
+            device=device,
+            dtype=dtype,
+        )
 
     if streaming_wrapper is None:
         # Baseline: 使用 sliding window 限制上下文长度
@@ -434,7 +501,13 @@ def _compute_streaming_decode_perplexity(
             prefill_time = time.perf_counter() - prefill_start
             first_token_recorded = False
 
-        for pos in range(prefill_len - 1, seq_len - 1):
+        decode_steps = max(0, seq_len - prefill_len)
+        for pos in _tqdm(
+            range(prefill_len - 1, seq_len - 1),
+            total=decode_steps,
+            desc="Decode (baseline)",
+            unit="tok",
+        ):
             start_idx = max(0, pos + 1 - max_cache_size)
             context = encoded_dataset[:, start_idx:pos + 1]
             target = encoded_dataset[:, pos + 1]
@@ -457,15 +530,20 @@ def _compute_streaming_decode_perplexity(
 
             if not first_token_recorded:
                 first_token_recorded = True
+            decode_tokens += 1
     else:
-        past_key_values = None
+        past_key_values = static_cache
         prefill_len = min(max_cache_size, seq_len)
         with streaming_wrapper.enable():
             input_ids = encoded_dataset[:, :prefill_len]
             if use_cuda_timing:
                 start_evt.record()
             with torch.no_grad():
-                outputs = model(input_ids=input_ids, use_cache=True)
+                outputs = model(
+                    input_ids=input_ids,
+                    past_key_values=past_key_values,
+                    use_cache=True,
+                )
 
             logits = outputs.logits[:, :-1, :]
             labels = input_ids[:, 1:]
@@ -489,7 +567,13 @@ def _compute_streaming_decode_perplexity(
                 prefill_time = time.perf_counter() - prefill_start
                 first_token_recorded = False
 
-            for pos in range(prefill_len - 1, seq_len - 1):
+            decode_steps = max(0, seq_len - prefill_len)
+            for pos in _tqdm(
+                range(prefill_len - 1, seq_len - 1),
+                total=decode_steps,
+                desc="Decode (streaming)",
+                unit="tok",
+            ):
                 current_input = encoded_dataset[:, pos:pos + 1]
                 target = encoded_dataset[:, pos + 1]
 
@@ -517,6 +601,7 @@ def _compute_streaming_decode_perplexity(
 
                 if not first_token_recorded:
                     first_token_recorded = True
+                decode_tokens += 1
 
     if use_cuda_timing:
         end_evt.record()
@@ -527,12 +612,16 @@ def _compute_streaming_decode_perplexity(
             first_token_time = first_start_evt.elapsed_time(first_end_evt) / 1000.0
     else:
         total_time = time.perf_counter() - total_start
+    decode_time = max(0.0, total_time - prefill_time)
     ppl = torch.exp(torch.tensor(total_nll / total_tokens))
     return PerplexityResult(
         perplexity=ppl.item(),
         runtime_sec=total_time,
         prefill_sec=prefill_time,
         first_token_latency_sec=first_token_time,
+        decode_tokens=decode_tokens,
+        decode_time_sec=decode_time,
+        tpot_ms=(decode_time / max(decode_tokens, 1)) * 1000.0,
     )
 
 

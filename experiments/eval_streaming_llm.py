@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from streaming_llm import StartRecentKVCache, StreamingLLMWrapper
 from eval_utils import (
     load_tokenized_dataset,
+    load_fixed_baseline,
     compute_perplexity,
     save_results,
     print_results,
@@ -119,6 +120,38 @@ def parse_args():
         help="滑动窗口大小"
     )
     parser.add_argument(
+        "--overlap",
+        type=int,
+        default=0,
+        help="额外保留的重叠 token 数"
+    )
+    parser.add_argument(
+        "--refresh-budget",
+        type=int,
+        default=0,
+        help="refresh token 预算"
+    )
+    parser.add_argument(
+        "--refresh-policy",
+        type=str,
+        default="none",
+        choices=["none", "uniform"],
+        help="refresh 采样策略"
+    )
+    parser.add_argument(
+        "--cache-implementation",
+        type=str,
+        default=None,
+        choices=["static"],
+        help="Cache implementation override (e.g., static)"
+    )
+    parser.add_argument(
+        "--compress-every",
+        type=int,
+        default=4,
+        help="StreamingLLM: 每隔多少 token 执行一次 KV 裁剪"
+    )
+    parser.add_argument(
         "--streaming-mode",
         type=str,
         choices=["ours", "mit"],
@@ -137,6 +170,12 @@ def parse_args():
         type=Path,
         help="已存在的基线结果 JSON (mode=streaming 时可复用)"
     )
+    parser.add_argument(
+        "--fixed-baseline-dir",
+        type=Path,
+        default=Path("results/baselines"),
+        help="固定基线目录 (可自动加载)"
+    )
     
     # 输出参数
     parser.add_argument(
@@ -151,7 +190,7 @@ def parse_args():
 
 def main():
     args = parse_args()
-    target_cache = args.n_sink + args.window_size
+    target_cache = args.n_sink + args.window_size + args.overlap + args.refresh_budget
     if args.max_length < target_cache:
         print(
             f"警告: max_length({args.max_length}) < n_sink + window_size ({target_cache}), "
@@ -181,6 +220,10 @@ def main():
     print(f"数据类型: {torch_dtype}")
     print(f"n_sink: {args.n_sink}")
     print(f"window_size: {args.window_size}")
+    print(f"overlap: {args.overlap}")
+    print(f"refresh_budget: {args.refresh_budget}")
+    print(f"refresh_policy: {args.refresh_policy}")
+    print(f"compress_every: {args.compress_every}")
     print(f"模式: {args.mode}")
     print(f"{'='*60}\n")
 
@@ -221,37 +264,53 @@ def main():
     baseline_first_token = None
     baseline_peak_memory_mb = 0.0
     
+    fixed_baseline = None
+    if args.fixed_baseline_dir:
+        fixed_baseline = load_fixed_baseline(args.dataset_name, args.fixed_baseline_dir)
+
     if args.mode in {"both", "baseline"}:
         print("\n" + "="*60)
         print("评估基线 (无压缩)")
         print("="*60)
-        baseline_stats = compute_perplexity(
-            model=model,
-            encoded_dataset=encoded_dataset,
-            device=device,
-            max_length=args.max_length,
-            stride=args.stride,
-            use_streaming=False,
-            max_cache_size=args.n_sink + args.window_size,
-        )
-        baseline_ppl = baseline_stats.perplexity
-        baseline_time = baseline_stats.runtime_sec
-        baseline_prefill = baseline_stats.prefill_sec
-        baseline_first_token = baseline_stats.first_token_latency_sec
-        if torch.cuda.is_available():
-            baseline_peak_memory_mb = torch.cuda.max_memory_allocated() / 1024 / 1024
-        baseline_first_token_value = baseline_first_token if baseline_first_token is not None else 0.0
-        baseline_metrics = {
-            "perplexity": baseline_ppl,
-            "runtime_sec": baseline_time,
-            "prefill_sec": baseline_prefill,
-            "first_token_latency_sec": baseline_first_token_value,
-            "peak_memory_mb": baseline_peak_memory_mb,
-        }
-        baseline_source = "computed"
-        print(f"基线 PPL: {baseline_ppl:.2f}")
-        print(f"基线 Runtime: {baseline_time:.3f}s")
-        print(f"基线 Prefill: {baseline_prefill:.3f}s")
+        if fixed_baseline and fixed_baseline.get("baseline"):
+            baseline_metrics = fixed_baseline.get("baseline")
+            baseline_source = f"fixed:{args.fixed_baseline_dir}"
+            print(f"加载固定基线: {baseline_source}")
+            print(f"基线 PPL: {baseline_metrics.get('perplexity', 0.0):.2f}")
+            print(f"基线 Runtime: {baseline_metrics.get('runtime_sec', 0.0):.3f}s")
+            print(f"基线 Prefill: {baseline_metrics.get('prefill_sec', 0.0):.3f}s")
+        else:
+            baseline_stats = compute_perplexity(
+                model=model,
+                encoded_dataset=encoded_dataset,
+                device=device,
+                max_length=args.max_length,
+                stride=args.stride,
+                use_streaming=False,
+                max_cache_size=target_cache,
+                cache_implementation=args.cache_implementation,
+            )
+            baseline_ppl = baseline_stats.perplexity
+            baseline_time = baseline_stats.runtime_sec
+            baseline_prefill = baseline_stats.prefill_sec
+            baseline_first_token = baseline_stats.first_token_latency_sec
+            if torch.cuda.is_available():
+                baseline_peak_memory_mb = torch.cuda.max_memory_allocated() / 1024 / 1024
+            baseline_first_token_value = baseline_first_token if baseline_first_token is not None else 0.0
+            baseline_metrics = {
+                "perplexity": baseline_ppl,
+                "runtime_sec": baseline_time,
+                "prefill_sec": baseline_prefill,
+                "first_token_latency_sec": baseline_first_token_value,
+                "decode_tokens": baseline_stats.decode_tokens,
+                "decode_time_sec": baseline_stats.decode_time_sec,
+                "tpot_ms": baseline_stats.tpot_ms,
+                "peak_memory_mb": baseline_peak_memory_mb,
+            }
+            baseline_source = "computed"
+            print(f"基线 PPL: {baseline_ppl:.2f}")
+            print(f"基线 Runtime: {baseline_time:.3f}s")
+            print(f"基线 Prefill: {baseline_prefill:.3f}s")
     elif args.mode == "streaming" and args.baseline_results:
         if not args.baseline_results.exists():
             raise FileNotFoundError(f"基线结果文件不存在: {args.baseline_results}")
@@ -261,6 +320,9 @@ def main():
         if baseline_metrics is None:
             raise ValueError("提供的基线结果文件不包含 baseline 字段")
         baseline_source = f"loaded:{args.baseline_results}"
+    elif args.mode == "streaming" and fixed_baseline and fixed_baseline.get("baseline"):
+        baseline_metrics = fixed_baseline.get("baseline")
+        baseline_source = f"fixed:{args.fixed_baseline_dir}"
     else:
         print("\nStreaming 模式未提供基线, 将重新计算基线以便对比")
         baseline_stats = compute_perplexity(
@@ -270,7 +332,8 @@ def main():
             max_length=args.max_length,
             stride=args.stride,
             use_streaming=False,
-            max_cache_size=args.n_sink + args.window_size,
+            max_cache_size=target_cache,
+            cache_implementation=args.cache_implementation,
         )
         baseline_ppl = baseline_stats.perplexity
         baseline_time = baseline_stats.runtime_sec
@@ -284,6 +347,9 @@ def main():
             "runtime_sec": baseline_time,
             "prefill_sec": baseline_prefill,
             "first_token_latency_sec": baseline_first_token_value,
+            "decode_tokens": baseline_stats.decode_tokens,
+            "decode_time_sec": baseline_stats.decode_time_sec,
+            "tpot_ms": baseline_stats.tpot_ms,
             "peak_memory_mb": baseline_peak_memory_mb,
         }
         baseline_source = "computed"
@@ -301,6 +367,10 @@ def main():
             "streaming_llm": {
                 "n_sink": args.n_sink,
                 "window_size": args.window_size,
+                "overlap": args.overlap,
+                "refresh_budget": args.refresh_budget,
+                "refresh_policy": args.refresh_policy,
+                "compress_every": args.compress_every,
                 "implementation": args.streaming_mode,
                 "cache_type": streaming_cache_name,
                 "max_cache_size": target_cache,
@@ -329,7 +399,7 @@ def main():
         if args.streaming_mode == "mit":
             cache_impl = StartRecentKVCache(
                 start_size=args.n_sink,
-                recent_size=args.window_size,
+                recent_size=args.window_size + args.overlap,
                 k_seq_dim=2,
                 v_seq_dim=2,
             )
@@ -337,6 +407,10 @@ def main():
             model=model,
             n_sink=args.n_sink,
             window_size=args.window_size,
+            overlap=args.overlap,
+            refresh_budget=args.refresh_budget,
+            refresh_policy=args.refresh_policy,
+            compress_every=args.compress_every,
             cache=cache_impl
         )
         streaming_cache_name = streaming_wrapper.cache_name
@@ -348,7 +422,8 @@ def main():
             stride=args.stride,
             use_streaming=True,
             streaming_wrapper=streaming_wrapper,
-            max_cache_size=args.n_sink + args.window_size,
+            max_cache_size=target_cache,
+            cache_implementation=args.cache_implementation,
         )
         streaming_ppl = streaming_stats.perplexity
         streaming_time = streaming_stats.runtime_sec
@@ -362,6 +437,9 @@ def main():
             "runtime_sec": streaming_time,
             "prefill_sec": streaming_prefill,
             "first_token_latency_sec": streaming_first_token,
+            "decode_tokens": streaming_stats.decode_tokens,
+            "decode_time_sec": streaming_stats.decode_time_sec,
+            "tpot_ms": streaming_stats.tpot_ms,
             "peak_memory_mb": streaming_peak_memory_mb,
         }
         compression_ratio = streaming_wrapper.get_compression_ratio(
@@ -385,6 +463,10 @@ def main():
         "streaming_llm": {
             "n_sink": args.n_sink,
             "window_size": args.window_size,
+            "overlap": args.overlap,
+            "refresh_budget": args.refresh_budget,
+            "refresh_policy": args.refresh_policy,
+            "compress_every": args.compress_every,
             "implementation": args.streaming_mode,
             "cache_type": streaming_cache_name,
             "max_cache_size": target_cache,
@@ -403,6 +485,7 @@ def main():
     if streaming_metrics:
         metrics_block["compression_ratio"] = compression_ratio
         metrics_block["first_token_latency_sec"] = streaming_metrics.get("first_token_latency_sec", 0.0)
+        metrics_block["tpot_ms"] = streaming_metrics.get("tpot_ms", 0.0)
         streaming_peak = streaming_metrics.get("peak_memory_mb", 0.0)
         metrics_block["peak_memory_mb"] = streaming_peak
         if baseline_metrics and streaming_metrics["runtime_sec"] > 0:
@@ -439,6 +522,9 @@ def main():
         first_token_latency = metrics_block.get("first_token_latency_sec")
         if first_token_latency is not None:
             print(f"首个 token latency: {first_token_latency:.4f}s")
+        tpot_ms = metrics_block.get("tpot_ms")
+        if tpot_ms is not None:
+            print(f"TPOT: {tpot_ms:.3f} ms/token")
         print(f"{'='*60}\n")
 
 
