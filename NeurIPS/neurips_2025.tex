@@ -93,7 +93,7 @@
 
 
 \begin{abstract}
-  Long-context inference in large language models faces significant challenges due to the quadratic growth of key-value (KV) cache memory and computation overhead. StreamingLLM addresses this by retaining attention sinks and a sliding window of recent tokens, but suffers from two limitations: (1) eager pruning overhead from frequent cache operations, and (2) hard eviction cliffs causing perplexity spikes. We propose three micro-innovations to enhance KV cache management: \textbf{Lazy Pruning}, which amortizes pruning costs by compressing every $R$ steps; \textbf{Slack}, a buffer mechanism allowing cache to temporarily exceed strict limits; and \textbf{Max\_Drop}, which limits single-step eviction to smooth quality degradation. On PG19 (20k tokens) with Pythia-2.8B, our approach achieves \textbf{7.03-7.11$\times$ speedup} with only \textbf{+2.2-2.6\% perplexity increase} (vs.\ baseline +6-8\%). We also systematically analyze why Flash Attention, quantization, and CUDA fusion fail in batch-1 streaming decoding scenarios, providing insights for future long-context inference research.
+  Long-context inference in large language models faces significant challenges due to the quadratic growth of key-value (KV) cache memory and computation overhead. StreamingLLM addresses this by retaining attention sinks and a sliding window of recent tokens, but suffers from two limitations: (1) eager pruning overhead from frequent cache operations, and (2) hard eviction cliffs causing perplexity spikes. We propose three micro-innovations to enhance KV cache management: \textbf{Lazy Pruning}, which amortizes pruning costs by compressing every $R$ steps; \textbf{Slack}, a buffer mechanism allowing cache to temporarily exceed strict limits; and \textbf{Max\_Drop}, which limits single-step eviction to smooth quality degradation. On PG19 (20k tokens) with Pythia-2.8B, our approach achieves \textbf{7.03-7.11$\times$ speedup} with only \textbf{+2.2-2.6\% perplexity increase} (vs.\ baseline +6-8\%). We also systematically analyze why Flash Attention, quantization, and CUDA fusion fail in batch-1 streaming decoding scenarios, providing insights for future long-context inference research. \textbf{Code:} \url{https://github.com/hopecommon/CS3602}
 \end{abstract}
 
 
@@ -445,6 +445,8 @@ We presented three micro-optimizations to StreamingLLM's KV cache management: \t
 
 Critically, we documented \textbf{five failed optimization attempts} (Flash Attention, quantization, \texttt{torch.compile}, speculative decoding, static cache) and analyzed why they fail in batch-1 long-context streaming scenarios. Our key finding: in this setting, \textbf{framework overhead dominates}, making micro-optimizations that reduce management overhead more effective than kernel-level acceleration.
 
+\textbf{Reproducibility.} All code, experiments, and documentation are available at \url{https://github.com/hopecommon/CS3602}. We provide one-click scripts to reproduce all paper results (Tables 1-2, Appendix tables). See \texttt{run\_paper\_experiments.sh} for full reproduction and \texttt{run\_paper\_quick\_check.sh} for rapid verification.
+
 \textbf{Limitations.}
 \begin{itemize}
     \item Tested only on Pythia-2.8B; larger models (7B+) may exhibit different behavior.
@@ -458,8 +460,6 @@ Critically, we documented \textbf{five failed optimization attempts} (Flash Atte
     \item Implement static ring buffer to enable \texttt{torch.compile} compatibility.
     \item Explore task-aware eviction policies based on attention score statistics.
 \end{itemize}
-
-Our code, configurations, and experimental logs are available in supplementary materials.
 
 
 % References using BibTeX

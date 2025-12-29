@@ -40,7 +40,7 @@
 \maketitle
 
 \begin{abstract}
-  StreamingLLM enables fixed-size KV cache for long-context LLM inference but suffers from (1) eager pruning overhead (2-4ms/token) and (2) hard eviction cliffs causing perplexity spikes. We propose three micro-optimizations: \textbf{Lazy Pruning} (compress every $R$ steps), \textbf{Slack} (buffer to reduce boundary thrashing), and \textbf{Max\_Drop} (limit single-step eviction). On PG19 (20k tokens) with Pythia-2.8B, we achieve \textbf{7.11$\times$ speedup} with only \textbf{+2.2\% perplexity increase} vs.\ baseline +6-8\%. We also document why Flash Attention, quantization, and CUDA fusion fail for batch-1 streaming, providing insights for future research.
+  StreamingLLM enables fixed-size KV cache for long-context LLM inference but suffers from (1) eager pruning overhead (2-4ms/token) and (2) hard eviction cliffs causing perplexity spikes. We propose three micro-optimizations: \textbf{Lazy Pruning} (compress every $R$ steps), \textbf{Slack} (buffer to reduce boundary thrashing), and \textbf{Max\_Drop} (limit single-step eviction). On PG19 (20k tokens) with Pythia-2.8B, we achieve \textbf{7.11$\times$ speedup} with only \textbf{+2.2\% perplexity increase} vs.\ baseline +6-8\%. We also document why Flash Attention, quantization, and CUDA fusion fail for batch-1 streaming, providing insights for future research. \textbf{Code:} \url{https://github.com/hopecommon/CS3602}
 \end{abstract}
 
 
@@ -139,6 +139,8 @@ $\sigma$ & $\delta$ & Speedup & TPOT (ms) & PPL Inc. (\%) \\
 \section{Conclusion}
 
 We propose three original micro-optimizations for StreamingLLM~\cite{xiao2023streamingllm}: \textbf{Lazy Pruning} (compress every $R$ steps), \textbf{Slack} (cache buffer $\sigma$), and \textbf{Max\_Drop} (limit eviction to $\delta$ tokens/step). On PG19 (20k tokens) with Pythia-2.8B, our best configuration achieves 7.11$\times$ speedup (TPOT: 14.1ms) with +2.82\% perplexity increase, outperforming vanilla StreamingLLM (+6.48\%). Rigorous ablation studies with statistical significance testing demonstrate synergistic interaction between Slack and Max\_Drop (66\% PPL improvement vs.\ baseline). Our systematic analysis of failed optimization attempts (Flash Attention, quantization, torch.compile, speculative decoding, static cache) with profiler evidence highlights the importance of framework overhead and batch size assumptions for long-context streaming inference, providing actionable insights for future research.
+
+\textbf{Reproducibility.} All code, experiments, and documentation are available at \url{https://github.com/hopecommon/CS3602}. We provide one-click scripts to reproduce all paper results (Tables 1-2, Appendix tables). See \texttt{run\_paper\_experiments.sh} for full reproduction and \texttt{run\_paper\_quick\_check.sh} for rapid verification.
 
 \textbf{Limitations:} (1) Single model (Pythia-2.8B); larger models may exhibit different overhead profiles. (2) Single GPU setup; distributed inference requires additional synchronization overhead analysis. (3) English text only (PG19, WikiText-103); multilingual or code generation tasks may have different attention patterns.
 
