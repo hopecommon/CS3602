@@ -1,284 +1,151 @@
 # NeurIPS 论文实验复现指南
 
-本文档说明如何复现论文 "Efficient KV Cache Management for Long-Context LLM Inference: Lazy Pruning and Soft Eviction Strategies" 中的实验结果。
+本文档说明如何 **一键跑完论文所需实验**，并自动生成论文使用的 LaTeX 表格（不手填数字，避免出错）。
 
-## 文件结构
+核心原则：
+- `NeurIPS/neurips_2025_compressed.tex` **不写死实验数字**，仅 `\input{NeurIPS/generated/*.tex}`。
+- 所有数字来自 `results/**.json`，由脚本自动生成表格。
+- Baseline 默认 **只跑一次并固定复用**（避免每次 sweep 重跑 baseline）。
+
+---
+
+## 1. 文件结构
 
 ```
 CS3602/
 ├── NeurIPS/
-│   ├── neurips_2025.tex              # 原版论文 (16页)
-│   ├── neurips_2025_compressed.tex   # 压缩版论文 (11页，3-4页正文)
-│   ├── references.bib                # 参考文献
-│   └── neurips_2025.sty              # NeurIPS 样式文件
+│   ├── neurips_2025_compressed.tex     # 4页正文版（表格自动生成）
+│   ├── generated/tables.tex            # 自动生成：主结果表
+│   ├── generated/ablations.tex         # 自动生成：Slack/Max_Drop 消融表
+│   ├── generated/sweeps.tex            # 自动生成：R/σ/δ 扫描表（可作补充材料）
+│   ├── generated/negative_results.tex  # 自动生成：定性负结果表
+│   └── references.bib
 ├── experiments/
-│   ├── eval_streaming_llm.py         # 主评估脚本
-│   ├── run_decode_perplexity.py      # Decode-loop PPL 评估
-│   └── ...
-├── run_paper_experiments.sh          # 完整实验脚本 (所有表格)
-└── run_paper_quick_check.sh          # 快速验证脚本 (核心数字)
+│   ├── eval_streaming_llm.py
+│   ├── run_fixed_baseline.py           # 生成固定 baseline（只需一次）
+│   └── paper/
+│       ├── generate_tables_tex.py
+│       ├── generate_ablations_tex.py
+│       ├── generate_sweeps_tex.py
+│       └── generate_negative_results_tex.py
+├── run_paper_experiments.sh            # 一键：主结果+消融+扫描+生成tex
+└── run_paper_quick_check.sh            # 小样本快速跑通
 ```
 
-## 快速开始
+---
 
-### 1. 快速验证核心数字 (推荐首次运行)
+## 2. 环境准备（推荐）
+
+可选 `.env`（脚本会自动读取）：
 
 ```bash
-# 运行 3 个样本，验证论文中的核心数字
+PYTHON_BIN=kvpress/.venv/bin/python
+MODEL_NAME=EleutherAI/pythia-2.8b
+
+HF_HOME=$PWD/.cache/huggingface
+HF_DATASETS_CACHE=$HF_HOME/datasets
+HF_HUB_OFFLINE=1
+TRANSFORMERS_OFFLINE=1
+```
+
+---
+
+## 3. 一次性生成固定 Baseline（只需做一次）
+
+`run_paper_experiments.sh` 默认 **不重跑 baseline**，而是复用：
+- `results/baselines/wikitext_baseline_avg.json`
+- `results/baselines/pg19_baseline_avg.json`
+
+生成方式（默认跑 3 次取平均）：
+
+```bash
+kvpress/.venv/bin/python experiments/run_fixed_baseline.py --runs 3
+```
+
+产物会写到：
+- `results/baselines/wikitext_baseline_avg.json`
+- `results/baselines/pg19_baseline_avg.json`
+
+---
+
+## 4. 快速跑通（小样本，先验证流程）
+
+```bash
 ./run_paper_quick_check.sh
 ```
 
-**验证内容**：
-- MIT StreamingLLM (对比基准): 6.86× speedup, +2.33% PPL
-- Ours (Best, R=64): 7.11× speedup, +2.82% PPL, 14.1ms TPOT
-- Ours (Softlite, R=32): 7.07× speedup, +2.19% PPL
-- Ablation 协同效应: 66% PPL improvement
+会生成（用于检查 pipeline 是否正常）：
+- `NeurIPS/generated/tables.tex`
+- `NeurIPS/generated/negative_results.tex`
 
-**预计时间**: 约 30-60 分钟 (取决于 GPU)
+---
 
-### 2. 完整实验 (复现所有表格)
+## 5. 一键跑完论文全部实验并生成 TeX
 
 ```bash
-# 运行 10 个样本，复现论文中的所有表格
 ./run_paper_experiments.sh
 ```
 
-**复现内容**：
-- **Table 1**: Main Results (PG19 20k tokens)
-  - Full Recomputation, MIT StreamingLLM, Ours (Eager/Best/Softlite)
-  
-- **Table 2**: Ablation - Synergistic Interaction
-  - σ=0,δ=∞ | σ=16,δ=∞ | σ=0,δ=32 | σ=16,δ=32
+默认会跑：
+- 主结果：Baseline(复用) + MIT + Ours（PG19 + WikiText）
+- 消融：w/o Slack、w/o Max_Drop、full（PG19）
+- 扫描：PG19 上的 `R/σ/δ`（可配置取值）
+- 生成 `NeurIPS/generated/*.tex`（主表、消融表、扫描表、负结果表）
 
-- **Appendix Tables**: Parameter Sweeps
-  - Lazy Pruning (R): 1, 16, 32, 64, 128
-  - Slack (σ): 0, 8, 16, 32, 64
-  - Max_Drop (δ): 0, 8, 16, 32, 64
-  - Enhanced Sinks (S): 4, 8, 16, 32, 64
+---
 
-**预计时间**: 约 3-6 小时
+## 6. 控制开关（避免太慢）
 
-## 实验参数配置
-
-### 核心配置映射
-
-| 论文配置 | 参数 |
-|---------|------|
-| **Baseline (MIT StreamingLLM)** | `S=4, W=2044, R=1` |
-| **Ours (Eager, R=1)** | `S=32, W=2016, R=1, σ=16, δ=32` |
-| **Ours (Best, R=64)** | `S=32, W=2016, R=64, σ=16, δ=32` |
-| **Ours (Softlite, R=32)** | `S=32, W=2016, R=32, σ=16, δ=32` |
-
-### 参数说明
-
-- `S` (`--n-sink`): Attention sink token 数量
-- `W` (`--window-size`): 滑动窗口大小
-- `R` (`--compress-every`): Lazy Pruning 压缩间隔
-- `σ` (`--cache-slack`): Slack 缓冲区大小
-- `δ` (`--max-drop`): Max_Drop 单次最大驱逐 token 数
-
-## 查看结果
-
-### 快速验证结果
+只跑主结果（跳过扫参和消融）：
 
 ```bash
-# 查看对比报告
-python results/paper_quick_check/compare_results.py
-
-# 查看详细 JSON
-cat results/paper_quick_check/ours_best_r64.json | jq '.metrics'
+RUN_SWEEPS=0 RUN_ABLATIONS=0 ./run_paper_experiments.sh
 ```
 
-### 完整实验结果
+自定义 sweep 网格（默认值见脚本）：
 
 ```bash
-# 查看汇总表格
-python results/paper_experiments/generate_summary.py
-
-# 查看所有结果文件
-ls -lh results/paper_experiments/
-
-# 查看特定实验
-cat results/paper_experiments/table1_ours_best_r64.json | jq .
-```
-
-### 关键指标
-
-实验输出的 JSON 文件包含以下关键指标：
-
-```json
-{
-  "metrics": {
-    "speedup": 7.11,           // 相对 baseline 的加速比
-    "tpot_ms": 14.1,           // Time Per Output Token (ms)
-    "ppl_increase_percent": 2.82,  // 相对 baseline 的 PPL 增加 (%)
-    "peak_memory_mb": 6616     // 峰值显存 (MB)
-  },
-  "streaming": {
-    "perplexity": 42.51,       // 绝对 perplexity
-    "runtime_sec": 14.15,      // 总运行时间 (秒)
-    "decode_time_sec": 282.1,  // 解码时间 (秒)
-    "decode_tokens": 20000     // 解码 token 数
-  }
-}
-```
-
-## 预期结果对比
-
-### Table 1: Main Results (PG19 20k)
-
-| Method | Speedup | TPOT (ms) | PPL Inc (%) | Memory (MB) |
-|--------|---------|-----------|-------------|-------------|
-| Full Recomputation | 1.00× | 100.5 | 0.00 | 6621 |
-| MIT StreamingLLM | 6.86× | 14.6 | +2.33 | 6617 |
-| **Ours (Best, R=64)** | **7.11×** | **14.1** | **+2.82** | **6616** |
-| Ours (Softlite, R=32) | 7.07× | 14.2 | +2.19 | 6616 |
-
-### Table 2: Ablation Study
-
-| σ | δ | Speedup | TPOT (ms) | PPL Inc (%) |
-|---|---|---------|-----------|-------------|
-| 0 | ∞ | 6.94× | 14.5 | +6.48 |
-| 16 | ∞ | 7.03× | 14.3 | +6.01 |
-| 0 | 32 | 6.88× | 14.6 | +5.94 |
-| **16** | **32** | **7.07×** | **14.2** | **+2.19** |
-
-**关键发现**: 
-- Slack alone 或 Max_Drop alone: 仅 +7% 和 +8% 改进
-- Combined (σ=16, δ=32): **66% improvement**, 3.8× better than additive
-
-## 环境配置
-
-### 必需的环境变量
-
-创建 `.env` 文件 (可选):
-
-```bash
-# Python 路径
-PYTHON_BIN=kvpress/.venv/bin/python
-
-# 模型
-MODEL_NAME=EleutherAI/pythia-2.8b
-
-# HuggingFace 缓存
-HF_HOME=$PWD/.cache/huggingface
-HF_HUB_OFFLINE=1
-TRANSFORMERS_OFFLINE=1
-
-# 实验参数
-PG19_MAX_TOKENS=20000
-WIKITEXT_MAX_TOKENS=4096
-```
-
-### 硬件要求
-
-- **GPU**: NVIDIA A800 (80GB) 或类似 (最低 24GB VRAM)
-- **Model**: Pythia-2.8B (FP16)
-- **Dataset**: PG19 (20k tokens per sample)
-
-## 故障排除
-
-### 1. 跳过已存在的实验
-
-脚本默认跳过已存在的结果文件。如需重新运行：
-
-```bash
-# 删除特定结果
-rm results/paper_experiments/table1_ours_best_r64.json
-
-# 删除所有结果并重新运行
-rm -rf results/paper_experiments/
+SWEEP_R_VALUES="1 16 32 64" \
+SWEEP_SIGMA_VALUES="0 16 32" \
+SWEEP_DELTA_VALUES="0 16 32" \
 ./run_paper_experiments.sh
 ```
 
-### 2. 数据集下载
+---
 
-首次运行会自动下载 PG19 数据集：
-
-```bash
-# 手动预下载 (可选)
-python -c "
-from datasets import load_dataset
-dataset = load_dataset('pg19', split='test')
-print(f'Downloaded {len(dataset)} samples')
-"
-```
-
-### 3. 内存不足
-
-如果遇到 OOM 错误：
-
-```bash
-# 减少样本数 (快速验证脚本已默认使用 3 samples)
-export MAX_SAMPLES=1
-
-# 或使用更小的模型
-export MODEL_NAME=EleutherAI/pythia-70m
-```
-
-## 论文编译
-
-### 编译压缩版 (推荐提交)
+## 7. 编译论文（表格自动填充）
 
 ```bash
 cd NeurIPS
 pdflatex neurips_2025_compressed.tex
+```
+
+若你还需要 bibtex：
+
+```bash
 bibtex neurips_2025_compressed
 pdflatex neurips_2025_compressed.tex
 pdflatex neurips_2025_compressed.tex
 ```
 
-**输出**: 11 页 (3-4 页正文 + 7 页附录)
+---
 
-### 修改作者信息
+## 8. 更新数字的推荐流程
 
-编辑 `neurips_2025_compressed.tex` 第 23-35 行：
+1) 重新运行 `./run_paper_experiments.sh`（刷新 JSON + 重新生成 `NeurIPS/generated/*.tex`）  
+2) 重新编译 `NeurIPS/neurips_2025_compressed.tex`
 
-```latex
-\author{%
-  学生姓名1 \\
-  学号: 学号1 \\
-  上海交通大学 计算机科学与工程系 \\
-  \texttt{email1@sjtu.edu.cn} \\
-  \And
-  学生姓名2 \\
-  学号: 学号2 \\
-  上海交通大学 计算机科学与工程系 \\
-  \texttt{email2@sjtu.edu.cn} \\
-  \AND
-  指导教师: 教师姓名 \\
-  上海交通大学 计算机科学与工程系 \\
-}
-```
-
-### 使用 preprint 模式显示作者
-
-确保第 4 行使用 `[preprint]` 选项：
-
-```latex
-\usepackage[preprint]{neurips_2025}
-```
-
-## 引用
-
-如果使用本代码，请引用：
-
-```bibtex
-@inproceedings{streamingllm-efficient,
-  title={Efficient KV Cache Management for Long-Context LLM Inference: Lazy Pruning and Soft Eviction Strategies},
-  author={学生姓名1 and 学生姓名2 and 指导教师},
-  booktitle={NeurIPS 2025 Course Project},
-  year={2025}
-}
-```
-
-## 联系方式
-
-如有问题，请联系：
-- 学生姓名1: email1@sjtu.edu.cn
-- 学生姓名2: email2@sjtu.edu.cn
-- 指导教师: 教师姓名
+如果某些表格仍显示 `[INSERT DATA]`，说明对应 JSON 结果缺失/失败，需要检查 `results/paper_experiments/` 下是否生成了相应文件。
 
 ---
 
-**最后更新**: 2025-12-29
+## 9. 负结果说明（目前以定性为主）
+
+负结果相关方法涉及其他分支/环境差异（例如 FlashAttention、CUDA fusion、部分 compile/graph 行为），在课程项目资源约束下我们优先以 **定性总结表**输出：
+- `NeurIPS/generated/negative_results.tex`
+
+详细证据与过程记录在：
+- `docs/探索日志.md`
+- `docs/QUANT_FAILURE_REPORT.md`
+- `docs/CUDA_KERNEL_FULL_REPORT.md`（如存在）
+

@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import json
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -40,7 +41,8 @@ def _run_baseline(
     stride = max(1, args.window_size // 2)
 
     cmd = [
-        "python", "experiments/eval_streaming_llm.py",
+        sys.executable,
+        "experiments/eval_streaming_llm.py",
         "--model-name", args.model_name,
         "--dtype", args.dtype,
         "--dataset-name", dataset,
