@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -101,6 +102,9 @@ def main() -> int:
             existing = _load_json(args.out)
             if existing.get("config_hash") == cfg_hash:
                 print(f"Skip existing (config match): {args.out}")
+                return 0
+            if os.environ.get("ALLOW_STALE_RESULTS", "0") == "1":
+                print(f"⚠ Existing output config mismatch; keeping stale result due to ALLOW_STALE_RESULTS=1: {args.out}")
                 return 0
             print(f"Existing output config mismatch; rerunning: {args.out}")
         except Exception:

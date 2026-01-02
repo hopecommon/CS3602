@@ -51,6 +51,11 @@ export HF_DATASETS_CACHE="${HF_DATASETS_CACHE:-$HF_HOME/datasets}"
 export HF_HUB_OFFLINE=${HF_HUB_OFFLINE:-1}
 export TRANSFORMERS_OFFLINE=${TRANSFORMERS_OFFLINE:-1}
 
+# Result reuse policy:
+# - By default, allow reusing stale aggregated results even if config_hash mismatches.
+#   This avoids surprise reruns during iteration; set ALLOW_STALE_RESULTS=0 to enforce reruns.
+export ALLOW_STALE_RESULTS="${ALLOW_STALE_RESULTS:-1}"
+
 PYTHON="${PYTHON_BIN:-kvpress/.venv/bin/python}"
 MODEL_NAME="${MODEL_NAME:-EleutherAI/pythia-2.8b}"
 

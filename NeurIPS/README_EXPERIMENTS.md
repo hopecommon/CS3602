@@ -125,6 +125,12 @@ SWEEP_DELTA_VALUES="0 16 32" \
 ```
 
 默认行为（不加 `-f`）会尽量复用已有 JSON，避免误触发长时间重跑。
+`run_paper_experiments.sh` 默认开启 `ALLOW_STALE_RESULTS=1`：即使参数变了也会复用旧的聚合结果（避免意外重跑）。
+如需严格模式（参数变了就自动重跑），可设置：
+
+```bash
+ALLOW_STALE_RESULTS=0 ./run_paper_experiments.sh
+```
 
 Baseline 指纹检查（跨机器/环境复用）：
 - 默认 `STRICT_BASELINE_CHECK=0`：发现 torch/cuda/GPU/配置不一致会提示警告，但不会中断运行（避免在他人服务器上卡住）。
