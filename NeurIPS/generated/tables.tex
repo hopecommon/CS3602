@@ -1,0 +1,29 @@
+\begin{table}[t]
+\centering
+\caption{Main results on PG19 (long-context, \emph{fill values via script output}).}
+\small
+\begin{tabular}{lcccc}
+\toprule
+Method & TPOT$\downarrow$ & Speedup$\uparrow$ & PPL$\downarrow$ & Peak Mem (MB)$\downarrow$ \\
+\midrule
+Baseline (Full KV) & 100.53 & 1.00$\times$ & 19.761 & 5722 \\
+StreamingLLM (MIT) & [INSERT DATA] & [INSERT DATA] & [INSERT DATA] & [INSERT DATA] \\
+Ours (Lazy/Slack/Max\_Drop) & [INSERT DATA] & [INSERT DATA] & [INSERT DATA] & [INSERT DATA] \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[t]
+\centering
+\caption{Sanity-check results on WikiText-103 (short-context).}
+\small
+\begin{tabular}{lccc}
+\toprule
+Method & TPOT$\downarrow$ & Speedup$\uparrow$ & PPL$\downarrow$ \\
+\midrule
+Baseline (Full KV) & 98.86 & 1.00$\times$ & 9.359 \\
+StreamingLLM (MIT) & [INSERT DATA] & [INSERT DATA] & [INSERT DATA] \\
+Ours (Lazy/Slack/Max\_Drop) & [INSERT DATA] & [INSERT DATA] & [INSERT DATA] \\
+\bottomrule
+\end{tabular}
+\end{table}

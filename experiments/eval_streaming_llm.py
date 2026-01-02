@@ -18,6 +18,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from streaming_llm import StartRecentKVCache, StreamingLLMWrapper
+from experiments.paper.env_info import collect_env_info
 from eval_utils import (
     load_tokenized_dataset,
     load_fixed_baseline,
@@ -169,6 +170,14 @@ def parse_args():
         choices=["ours", "mit"],
         default="ours",
         help="StreamingLLM implementation to use for the decode loop"
+    )
+    parser.add_argument(
+        "--cache-backend",
+        type=str,
+        choices=["auto", "ours", "mit"],
+        default="auto",
+        help="KV cache backend: auto=follow streaming-mode, ours=StreamingKVCache, mit=StartRecentKVCache. "
+             "Useful for fairness checks (e.g., ours-framework-only).",
     )
     parser.add_argument(
         "--mode",
@@ -412,7 +421,10 @@ def main():
         print("评估 StreamingLLM (我们的实现)")
         print("="*60)
         cache_impl = None
-        if args.streaming_mode == "mit":
+        cache_backend = args.cache_backend
+        if cache_backend == "auto":
+            cache_backend = "mit" if args.streaming_mode == "mit" else "ours"
+        if cache_backend == "mit":
             cache_impl = StartRecentKVCache(
                 start_size=args.n_sink,
                 recent_size=args.window_size + args.overlap,
@@ -494,6 +506,7 @@ def main():
         "device": str(device),
         "dtype": str(torch_dtype),
         "baseline_source": baseline_source,
+        "env": collect_env_info(repo_root=str(Path(__file__).parent.parent)).to_dict(),
     }
     
     if baseline_metrics:

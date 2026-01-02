@@ -12,6 +12,11 @@ import sys
 from pathlib import Path
 from typing import Any
 
+# Ensure repo root is on sys.path when invoked as a script (e.g., `python experiments/run_fixed_baseline.py`).
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from experiments.paper.env_info import collect_env_info, env_compatible
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run fixed baselines and average results")
@@ -98,6 +103,14 @@ def _write_avg(
     output_path: Path,
     args: argparse.Namespace,
 ) -> None:
+    env_now = collect_env_info(repo_root=str(Path(__file__).resolve().parents[1])).to_dict()
+    prev_env = None
+    if output_path.exists():
+        try:
+            prev_env = json.loads(output_path.read_text()).get("env")
+        except Exception:
+            prev_env = None
+
     avg_metrics = _average_metrics(runs)
     template = runs[0]
     results = {
@@ -114,6 +127,7 @@ def _write_avg(
         "baseline_source": f"averaged:{len(runs)}",
         "device": template.get("device"),
         "dtype": template.get("dtype"),
+        "env": env_now,
         "runs": [r.get("_run_path") for r in runs],
     }
     output_path.write_text(json.dumps(results, indent=2))

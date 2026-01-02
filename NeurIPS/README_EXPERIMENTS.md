@@ -5,7 +5,8 @@
 核心原则：
 - `NeurIPS/neurips_2025_compressed.tex` **不写死实验数字**，仅 `\input{NeurIPS/generated/*.tex}`。
 - 所有数字来自 `results/**.json`，由脚本自动生成表格。
-- Baseline 默认 **只跑一次并固定复用**（避免每次 sweep 重跑 baseline）。
+- Baseline 默认 **只跑一次并固定复用**（避免每次 sweep 重跑 baseline；PG19 很慢）。
+- 默认会复用已有实验点结果（避免误触发长时间重跑）；每个结果文件都带 `config_hash`，参数变了会自动重跑。
 
 ---
 
@@ -29,7 +30,7 @@ CS3602/
 │       ├── generate_sweeps_tex.py
 │       └── generate_negative_results_tex.py
 ├── run_paper_experiments.sh            # 一键：主结果+消融+扫描+生成tex
-└── run_paper_quick_check.sh            # 小样本快速跑通
+└── (no quick script)                   # 只维护一个入口，避免口径漂移
 ```
 
 ---
@@ -56,39 +57,32 @@ TRANSFORMERS_OFFLINE=1
 - `results/baselines/wikitext_baseline_avg.json`
 - `results/baselines/pg19_baseline_avg.json`
 
-生成方式（默认跑 3 次取平均）：
+生成方式（默认跑 1 次；如需更稳可手动改成 3/5 次）：
 
 ```bash
-kvpress/.venv/bin/python experiments/run_fixed_baseline.py --runs 3
+kvpress/.venv/bin/python experiments/run_fixed_baseline.py --runs 1
 ```
 
 产物会写到：
 - `results/baselines/wikitext_baseline_avg.json`
 - `results/baselines/pg19_baseline_avg.json`
 
----
-
-## 4. 快速跑通（小样本，先验证流程）
-
-```bash
-./run_paper_quick_check.sh
-```
-
-会生成（用于检查 pipeline 是否正常）：
-- `NeurIPS/generated/tables.tex`
-- `NeurIPS/generated/negative_results.tex`
+说明：
+- `run_paper_experiments.sh` 会优先复用上述 baseline；若缺失且 `AUTO_BASELINE=1`（默认），会自动触发生成。
+- `run_paper_experiments.sh -f` 会强制重新生成 baseline（并重跑所有实验点）。
 
 ---
 
-## 5. 一键跑完论文全部实验并生成 TeX
+## 4. 一键跑完论文全部实验并生成 TeX
 
 ```bash
+# 推荐在仓库根目录执行（脚本也会自动切到仓库根目录）
 ./run_paper_experiments.sh
 ```
 
 默认会跑：
 - 主结果：Baseline(复用) + MIT + Ours（PG19 + WikiText）
-- 消融：w/o Slack、w/o Max_Drop、full（PG19）
+- 消融：ladder（MIT → +Lazy → +Slack → +Max\_Drop + 以及 w/o Lazy 对照）（PG19）
 - 扫描：PG19 上的 `R/σ/δ`（可配置取值）
 - 生成 `NeurIPS/generated/*.tex`（主表、消融表、扫描表、负结果表）
 
@@ -110,6 +104,18 @@ SWEEP_SIGMA_VALUES="0 16 32" \
 SWEEP_DELTA_VALUES="0 16 32" \
 ./run_paper_experiments.sh
 ```
+
+强制重跑（忽略已有结果，覆盖生成的 JSON/TeX）：
+
+```bash
+./run_paper_experiments.sh -f
+```
+
+默认行为（不加 `-f`）会尽量复用已有 JSON，避免误触发长时间重跑。
+
+Baseline 指纹检查（跨机器/环境复用）：
+- 默认 `STRICT_BASELINE_CHECK=0`：发现 torch/cuda/GPU/配置不一致会提示警告，但不会中断运行（避免在他人服务器上卡住）。
+- 如需严格模式：`STRICT_BASELINE_CHECK=1 ./run_paper_experiments.sh`，不一致会自动重跑 baseline 以避免 speedup 漂移。
 
 ---
 
@@ -148,4 +154,3 @@ pdflatex neurips_2025_compressed.tex
 - `docs/探索日志.md`
 - `docs/QUANT_FAILURE_REPORT.md`
 - `docs/CUDA_KERNEL_FULL_REPORT.md`（如存在）
-

@@ -15,6 +15,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
+# Ensure repo root is on sys.path when invoked as a script.
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
 
 PLACEHOLDER = "[INSERT DATA]"
 
@@ -135,25 +139,29 @@ def main() -> int:
     )
 
     pg19_mit = _load_json(args.results_dir / "pg19_mit.json")
+    pg19_ours_framework_only = _load_json(args.results_dir / "pg19_ours_framework_only.json")
     pg19_ours = _load_json(args.results_dir / "pg19_ours.json")
 
     wikitext_mit = _load_json(args.results_dir / "wikitext_mit.json")
+    wikitext_ours_framework_only = _load_json(args.results_dir / "wikitext_ours_framework_only.json")
     wikitext_ours = _load_json(args.results_dir / "wikitext_ours.json")
 
-    table_pg19 = _table_main_pg19(
-        [
-            _extract_row("Baseline (Full KV)", pg19_baseline, assume_speedup_one=True),
-            _extract_row("StreamingLLM (MIT)", pg19_mit),
-            _extract_row("Ours (Lazy/Slack/Max\\_Drop)", pg19_ours),
-        ]
-    )
-    table_wiki = _table_main_wikitext(
-        [
-            _extract_row("Baseline (Full KV)", wikitext_baseline, assume_speedup_one=True),
-            _extract_row("StreamingLLM (MIT)", wikitext_mit),
-            _extract_row("Ours (Lazy/Slack/Max\\_Drop)", wikitext_ours),
-        ]
-    )
+    pg19_rows = [
+        _extract_row("Baseline (Sliding Window, no KV)", pg19_baseline, assume_speedup_one=True),
+        _extract_row("StreamingLLM (MIT, aligned $S,W$)", pg19_mit),
+    ]
+    if pg19_ours_framework_only is not None:
+        pg19_rows.append(_extract_row("Ours-framework-only (Start+Recent)", pg19_ours_framework_only))
+    pg19_rows.append(_extract_row("Ours (aligned $S,W$)", pg19_ours))
+    table_pg19 = _table_main_pg19(pg19_rows)
+    wiki_rows = [
+        _extract_row("Baseline (Sliding Window, no KV)", wikitext_baseline, assume_speedup_one=True),
+        _extract_row("StreamingLLM (MIT, aligned $S,W$)", wikitext_mit),
+    ]
+    if wikitext_ours_framework_only is not None:
+        wiki_rows.append(_extract_row("Ours-framework-only (Start+Recent)", wikitext_ours_framework_only))
+    wiki_rows.append(_extract_row("Ours (aligned $S,W$)", wikitext_ours))
+    table_wiki = _table_main_wikitext(wiki_rows)
 
     content = "\n\n".join([table_pg19, table_wiki]) + "\n"
     args.out.write_text(content, encoding="utf-8")
@@ -163,4 +171,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

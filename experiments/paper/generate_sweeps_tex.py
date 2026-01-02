@@ -15,6 +15,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
+# Ensure repo root is on sys.path when invoked as a script.
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
 
 PLACEHOLDER = "[INSERT DATA]"
 
@@ -123,4 +127,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

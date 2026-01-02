@@ -58,6 +58,13 @@ We propose three training-free, modular mechanisms on top of StreamingLLM:
 (iii) \textbf{Max\_Drop}, which limits the maximum tokens evicted per prune event to $\delta$.
 We provide a reproducible evaluation pipeline and summarize negative results for methods that are effective in other regimes but do not improve batch-1 streaming decode.
 
+\section{Related Work}
+\label{sec:related}
+\textbf{Long-context inference and KV-cache compression.}
+Test-time KV-cache management is a widely used approach to make long-context inference feasible, including retention/eviction heuristics and cache compression~\cite{xiao2023streamingllm,zhang2023h2o,liu2023scissorhands,kwon2023paged}. Our work builds on StreamingLLM's Start+Recent rule and focuses on \emph{training-free} extensions that target the practical costs of pruning and eviction-induced distribution shifts.
+\textbf{Kernel- and decoding-level accelerations.}
+Attention kernels such as FlashAttention aim to reduce attention IO cost~\cite{dao2022flashattention,dao2023flashattention2}, while speculative decoding accelerates generation by drafting tokens~\cite{leviathan2023speculative,chen2023accelerating}. Post-training quantization reduces compute/memory but its benefits depend on hardware and runtime regime~\cite{dettmers2022llmint8,frantar2023gptq}. We empirically find these do not improve batch-1 streaming decode in our setting and analyze the underlying reasons (Sec.~\ref{sec:negative}).
+
 \section{Method}
 \label{sec:method}
 We first define Start+Recent streaming, then formalize our three mechanisms.
@@ -65,8 +72,13 @@ We first define Start+Recent streaming, then formalize our three mechanisms.
 \subsection{Preliminaries: Start+Recent StreamingLLM}
 Let $x_{1:t}$ be the processed prefix at decode step $t$. For each layer $\ell$, let $(\mathbf{K}_t^\ell,\mathbf{V}_t^\ell)$ denote the KV cache with sequence length $L_t$ along the cache dimension. Start+Recent streaming retains (i) the first $S$ sink tokens, and (ii) the most recent $W$ tokens. Define the soft capacity
 \begin{equation}
-  C \triangleq S + W.
+  C_0 \triangleq S + W.
 \end{equation}
+Our code also supports optional \emph{non-core} retained tokens (e.g., overlap/refresh); we denote their total budget by $B\ge 0$ and define the effective soft capacity
+\begin{equation}
+  C \triangleq C_0 + B.
+\end{equation}
+Unless stated otherwise, we use $B=0$ in paper experiments to isolate our three mechanisms.
 When pruning is performed, the retained index set is
 \begin{equation}
   \mathcal{I}_t \;=\; \{0,1,\ldots,S-1\}\;\cup\;\{L_t-W,\ldots,L_t-1\},
@@ -74,19 +86,33 @@ When pruning is performed, the retained index set is
 with the recent segment clamped to avoid overlap with the sink segment.
 
 \paragraph{RoPE consistency.}
-For rotary-position-embedding models (e.g., Pythia/GPT-NeoX), pruning changes token positions in the cache; therefore, cached keys must be re-aligned to the new positions. Our implementation applies a constant RoPE shift for the retained recent block and performs re-rotation when tokens are relocated.
+For rotary-position-embedding models (e.g., Pythia/GPT-NeoX), pruning changes token positions in the cache; therefore, cached keys must be re-aligned to the new positions. Let $p\in\mathcal{I}_t$ be an old token position and $p' = f_t(p)\in\{0,\ldots,|\mathcal{I}_t|-1\}$ be its new position after compaction. RoPE encodes position via per-dimension frequencies $\omega_i$ (from \texttt{inv\_freq}). Re-alignment is equivalent to applying a \emph{delta-rotation} with $\Delta p = p'-p$:
+\begin{equation}
+\begin{bmatrix}
+k'_{2i}\\k'_{2i+1}
+\end{bmatrix}
+\;=\;
+\begin{bmatrix}
+\cos(\omega_i \Delta p) & -\sin(\omega_i \Delta p)\\
+\sin(\omega_i \Delta p) & \cos(\omega_i \Delta p)
+\end{bmatrix}
+\begin{bmatrix}
+k_{2i}\\k_{2i+1}
+\end{bmatrix}.
+\end{equation}
+Our implementation exploits that Start+Recent yields a constant $\Delta p$ for the contiguous recent block (a constant shift), and falls back to the general per-token re-rotation when tokens are explicitly relocated (e.g., refresh tokens).
 
 \subsection{Lazy Pruning}
-Na\"ive streaming prunes as soon as the cache exceeds $C$, which can add overhead due to slicing/copy and KV relocation. We instead amortize pruning using a threshold $R$.
+Na\"ive streaming prunes as soon as the cache exceeds $C$, which can add overhead due to slicing/copy and KV relocation. We instead amortize pruning by allowing the cache to exceed $C$ by up to $R{-}1$ tokens before triggering a prune.
 Define overflow:
 \begin{equation}
   \mathrm{overflow}_t \triangleq L_t - C.
 \end{equation}
-Lazy pruning triggers only when overflow reaches $R$:
+Let $R$ be the \emph{overflow allowance} hyperparameter (in code: \texttt{compress\_every}). We allow $R=0$ to disable pruning for debugging (unbounded memory), and use $R\ge 1$ in all bounded-memory settings. Lazy pruning triggers only when overflow reaches $R$:
 \begin{equation}
-  \mathrm{PruneTrigger}(t) \triangleq \mathbb{1}\big[\mathrm{overflow}_t \ge R\big].
+  \mathrm{PruneTrigger}(t) \triangleq \mathbb{1}[R>0]\cdot \mathbb{1}\big[\mathrm{overflow}_t \ge R\big].
 \end{equation}
-When $R=0$, pruning is disabled and the cache grows without eviction (not recommended for long sequences).
+This matches the implementation semantics and avoids the ambiguity that would arise from interpreting $R=0$ as ``prune immediately''.
 
 \subsection{Slack (Hard-Cap Buffer)}
 Slack introduces a \emph{hard} capacity that bounds temporary cache growth during staged pruning. Specifically, we define
@@ -109,14 +135,18 @@ Let $\delta \ge 0$ be the maximum drop size. When pruning is triggered, we set a
 \end{equation}
 and prune the cache to keep exactly $L_t^\star$ tokens using the Start+Recent rule. This turns a single large eviction into multiple smaller evictions across steps while remaining within the hard capacity $H$.
 
+\paragraph{Hyperparameter interactions and a toy example.}
+When $\delta>0$, staged eviction can leave $L_t^\star > C$, so pruning may trigger again soon; this is intentional. A practical rule-of-thumb to avoid pruning \emph{every} step when the cache saturates at $H$ is to choose $\sigma < R$ (so that after pruning to $H$, the overflow remains $<R$ until enough new tokens arrive).
+For example, with $(S,W,R,\sigma,\delta)=(4,2044,32,16,32)$ (so $C=2048$, $H=2064$), if a step reaches $L_t=2090$ (overflow $=42$), we prune to $L_t^\star=\min(\max(2090-32,2048),2064)=2058$ and continue staging further evictions as decoding proceeds.
+
 \subsection{Algorithm Summary}
 Algorithm~\ref{alg:kv} summarizes the pruning control logic (RoPE re-alignment and buffer management are omitted for clarity).
 \begin{algorithm}[t]
 \caption{KV pruning with Lazy Pruning, Slack, and Max\_Drop}
 \label{alg:kv}
 \begin{algorithmic}[1]
-\REQUIRE sink size $S$, window size $W$, prune interval $R$, slack $\sigma$, max\_drop $\delta$
-\STATE $C \leftarrow S+W$, $H \leftarrow C+\sigma$
+\REQUIRE sink size $S$, window size $W$, extra budget $B$ (default 0), overflow allowance $R$ (0 disables), slack $\sigma$, max\_drop $\delta$
+\STATE $C_0 \leftarrow S+W$, $C \leftarrow C_0 + B$, $H \leftarrow C+\sigma$
 \STATE observe cache length $L_t$
 \IF{$R=0$} \STATE \textbf{return} \ENDIF
 \IF{$L_t \le C$} \STATE \textbf{return} \ENDIF
@@ -135,10 +165,16 @@ Algorithm~\ref{alg:kv} summarizes the pruning control logic (RoPE re-alignment a
 \label{sec:exp}
 
 \subsection{Setup}
-We evaluate on Pythia-2.8B. We use WikiText-103 as a short-context sanity check and PG19 as the primary long-context benchmark. We report TTFT, TPOT (ms/token), throughput (tok/s), total runtime, peak GPU memory, and perplexity (PPL). We follow a fixed evaluation protocol and cap the effective context length for fair comparison across configurations.
+We evaluate on Pythia-2.8B. We use WikiText-103 as a short-context sanity check and PG19 as the primary long-context benchmark~\cite{pg19}. We report TTFT, TPOT (ms/token), throughput (tok/s), total runtime, peak GPU memory, and perplexity (PPL).
+\textbf{Baselines and fairness.} Our long-context evaluation must respect the model's maximum position length. Therefore, we compare methods under the same \emph{effective context cap} $C$ (Sec.~\ref{sec:method}): the non-streaming baseline uses a sliding window of length $C$ and recomputes attention each step (no KV cache), while StreamingLLM variants reuse KV cache and apply pruning/re-alignment to stay within the same cap. All methods share the same model, dataset segment, and evaluation protocol implemented in \texttt{experiments/eval\_streaming\_llm.py}.
+
+\paragraph{Protocol and repeatability.}
+To reduce measurement noise, our reproduction script runs a warmup pass followed by $N$ repeated trials for each configuration and reports mean and standard deviation (saved in JSON). Each JSON record includes environment fingerprints (GPU, driver, torch/CUDA) to prevent reusing baselines across incompatible environments.
 
 \subsection{Main Results and Ablations}
 We provide a one-click script (\texttt{run\_paper\_experiments.sh}) that runs all configurations and generates LaTeX tables automatically. If the tables are not generated yet, we show placeholders.
+\paragraph{Implementation-path fairness check.}
+To ensure that improvements are not caused by divergent code paths, we also report an \emph{Ours-framework-only} configuration that uses our wrapper implementation but matches Start+Recent semantics (MIT-style cache backend) with all proposed mechanisms disabled.
 \IfFileExists{generated/tables.tex}{
   \input{generated/tables.tex}
 }{
@@ -150,7 +186,7 @@ We provide a one-click script (\texttt{run\_paper\_experiments.sh}) that runs al
   \toprule
   Method & TPOT$\downarrow$ & Speedup$\uparrow$ & PPL$\downarrow$ & Peak Mem$\downarrow$ \\
   \midrule
-  Baseline (Full KV) & \insertdata{TPOT} & 1.00$\times$ & \insertdata{PPL} & \insertdata{Mem} \\
+  Baseline (Sliding Window, no KV) & \insertdata{TPOT} & 1.00$\times$ & \insertdata{PPL} & \insertdata{Mem} \\
   StreamingLLM (MIT) & \insertdata{TPOT} & \insertdata{Speedup} & \insertdata{PPL} & \insertdata{Mem} \\
   Ours (Lazy/Slack/Max\_Drop) & \insertdata{TPOT} & \insertdata{Speedup} & \insertdata{PPL} & \insertdata{Mem} \\
   \bottomrule

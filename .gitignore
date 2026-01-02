@@ -555,24 +555,14 @@ TSWLatexianTemp*
 *.upa
 *.upb
 
-# Keep only source files and final PDFs
-# Uncomment the following if you want to ignore ALL PDFs
-# *.pdf
-
-# But keep specific PDFs if needed (example)
-# !neurips_2025.pdf
-# !neurips_2025_compressed.pdf
-
 # Project artifacts
 results/
 results_70M/
-NeurIPS/generated/*.tex
 !NeurIPS/generated/.gitkeep
 NeurIPS/*.aux
 NeurIPS/*.bbl
 NeurIPS/*.blg
 NeurIPS/*.log
 NeurIPS/*.out
-NeurIPS/*.pdf
 NeurIPS/*.toc
 NeurIPS/*.synctex.gz

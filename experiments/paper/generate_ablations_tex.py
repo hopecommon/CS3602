@@ -15,6 +15,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
+# Ensure repo root is on sys.path when invoked as a script.
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
 
 PLACEHOLDER = "[INSERT DATA]"
 
@@ -62,7 +66,7 @@ def _render_table(rows: list[Row]) -> str:
     lines: list[str] = []
     lines.append("\\begin{table}[t]")
     lines.append("\\centering")
-    lines.append("\\caption{Ablation study for Slack and Max\\_Drop (PG19).}")
+    lines.append("\\caption{Ablation ladder on PG19 (aligned $S,W$): impact of Lazy, Slack, and Max\\_Drop.}")
     lines.append("\\small")
     lines.append("\\begin{tabular}{lccc}")
     lines.append("\\toprule")
@@ -84,17 +88,20 @@ def main() -> int:
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
 
-    # Expected filenames produced by run_paper_experiments.sh (full mode).
     abl_dir = args.results_dir / "ablations"
-    data_full = _load_json(abl_dir / "pg19_full.json")
-    data_no_slack = _load_json(abl_dir / "pg19_no_slack.json")
-    data_no_maxdrop = _load_json(abl_dir / "pg19_no_maxdrop.json")
+    a0_mit = _load_json(abl_dir / "pg19_A0_mit.json")
+    a_neg_lazy = _load_json(abl_dir / "pg19_Aneg_lazy_strict.json")
+    a1_lazy = _load_json(abl_dir / "pg19_A1_lazy.json")
+    a2_lazy_slack = _load_json(abl_dir / "pg19_A2_lazy_slack.json")
+    a3_full = _load_json(abl_dir / "pg19_A3_full.json")
 
     tex = _render_table(
         [
-            _extract_row("w/o Slack ($\\sigma=0$)", data_no_slack),
-            _extract_row("w/o Max\\_Drop ($\\delta=0$)", data_no_maxdrop),
-            _extract_row("Full (Lazy+Slack+Max\\_Drop)", data_full),
+            _extract_row("MIT (Start+Recent)", a0_mit),
+            _extract_row("Ours w/o Lazy ($R{=}1,\\sigma{=}0,\\delta{=}0$)", a_neg_lazy),
+            _extract_row("+ Lazy", a1_lazy),
+            _extract_row("+ Lazy + Slack", a2_lazy_slack),
+            _extract_row("+ Lazy + Slack + Max\\_Drop", a3_full),
         ]
     )
     args.out.write_text(tex, encoding="utf-8")
@@ -104,4 +111,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
