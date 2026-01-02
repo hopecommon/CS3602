@@ -287,8 +287,11 @@ def main():
     baseline_first_token = None
     baseline_peak_memory_mb = 0.0
     
+    # Note: when `--mode baseline`, we are typically generating/refreshing baseline numbers.
+    # In that case, do NOT reuse an existing fixed baseline file (to avoid accidental
+    # self-references or stale/foreign baselines causing confusing PPL results).
     fixed_baseline = None
-    if args.fixed_baseline_dir:
+    if args.fixed_baseline_dir and args.mode != "baseline":
         fixed_baseline = load_fixed_baseline(args.dataset_name, args.fixed_baseline_dir)
 
     if args.mode in {"both", "baseline"}:
