@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -65,7 +66,16 @@ def _run_baseline(
         "--stride", str(stride),
         "--output", str(output_path),
     ]
-    result = subprocess.run(cmd, check=False)
+    # Pin the presampled file selection to keep results comparable across machines:
+    # - PG19: prefer the long_context_{max_eval_tokens}.json sample if available.
+    # - WikiText: prefer the long_context_{max_eval_tokens}.json sample if available.
+    env = os.environ.copy()
+    if dataset.lower().startswith("pg19") and "PG19_SAMPLE_FILE" not in env and "PG19_SAMPLE_LENGTH" not in env:
+        env["PG19_SAMPLE_LENGTH"] = str(max_eval_tokens)
+    if dataset.lower().startswith("wikitext") and "WIKITEXT_SAMPLE_FILE" not in env and "WIKITEXT_SAMPLE_LENGTH" not in env:
+        env["WIKITEXT_SAMPLE_LENGTH"] = str(max_eval_tokens)
+
+    result = subprocess.run(cmd, check=False, env=env)
     if result.returncode != 0 or not output_path.exists():
         print(f"Baseline run failed: {dataset} #{run_idx}")
         return None

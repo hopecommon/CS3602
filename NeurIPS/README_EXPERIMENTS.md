@@ -47,6 +47,11 @@ HF_HOME=$PWD/.cache/huggingface
 HF_DATASETS_CACHE=$HF_HOME/datasets
 HF_HUB_OFFLINE=1
 TRANSFORMERS_OFFLINE=1
+
+# (Recommended) Pin presampled evaluation segments for reproducibility
+# (these are consumed by experiments/eval_utils.py)
+WIKITEXT_SAMPLE_LENGTH=4096
+PG19_SAMPLE_LENGTH=20000
 ```
 
 ---
@@ -89,6 +94,14 @@ kvpress/.venv/bin/python experiments/run_fixed_baseline.py --runs 1
 ---
 
 ## 6. 控制开关（避免太慢）
+
+重复运行（统计稳定性）：
+- 默认是“先跑通 pipeline”：`WARMUP_RUNS=0`、`REPEAT_RUNS=1`（最快）
+- 需要最终表格数字时再开启重复跑（均值/方差），例如：
+
+```bash
+WARMUP_RUNS=1 REPEAT_RUNS=3 ./run_paper_experiments.sh
+```
 
 只跑主结果（跳过扫参和消融）：
 

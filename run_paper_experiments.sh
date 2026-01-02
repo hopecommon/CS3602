@@ -61,6 +61,15 @@ mkdir -p "$RESULTS_DIR"
 WIKITEXT_TOKENS="${WIKITEXT_TOKENS:-4096}"
 PG19_TOKENS="${PG19_TOKENS:-20000}"
 
+# Pin presampled files for reproducibility across machines (override via env).
+# These variables are consumed by experiments/eval_utils.py.
+if [[ -z "${WIKITEXT_SAMPLE_LENGTH:-}" && -z "${WIKITEXT_SAMPLE_FILE:-}" ]]; then
+  export WIKITEXT_SAMPLE_LENGTH="$WIKITEXT_TOKENS"
+fi
+if [[ -z "${PG19_SAMPLE_LENGTH:-}" && -z "${PG19_SAMPLE_FILE:-}" ]]; then
+  export PG19_SAMPLE_LENGTH="$PG19_TOKENS"
+fi
+
 # How many independent samples for dataset evaluation (mean across samples).
 MAX_SAMPLES_WIKI="${MAX_SAMPLES_WIKI:-64}"
 MAX_SAMPLES_PG19="${MAX_SAMPLES_PG19:-10}"
@@ -89,8 +98,9 @@ EXTRA_WINDOW="${EXTRA_WINDOW:-2016}" # ensures EXTRA_SINK+EXTRA_WINDOW=2048
 RUN_SINK_CONFOUND="${RUN_SINK_CONFOUND:-1}"
 
 # Repeatability protocol
-WARMUP_RUNS="${WARMUP_RUNS:-1}"
-REPEAT_RUNS="${REPEAT_RUNS:-3}"
+# Default to a single-pass run (fast iteration). Increase these for final numbers.
+WARMUP_RUNS="${WARMUP_RUNS:-0}"
+REPEAT_RUNS="${REPEAT_RUNS:-1}"
 SKIP_EXISTING="${SKIP_EXISTING:-1}"
 if [[ "$FORCE" == "1" ]]; then
   SKIP_EXISTING=0
