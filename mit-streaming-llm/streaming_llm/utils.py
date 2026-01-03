@@ -19,6 +19,7 @@ def parse_args():
     parser.add_argument("--revision", type=str, default="main")
     parser.add_argument("--tokenizer_name_or_path", type=str, default=None)
     parser.add_argument("--dataset_name", type=str, default="wikitext")
+    parser.add_argument("--dataset_path", type=str, default=None, help="Path to local dataset file (json/jsonl)")
 
     parser.add_argument("--task", type=str, default="wikitext-2-raw-v1")
     parser.add_argument(

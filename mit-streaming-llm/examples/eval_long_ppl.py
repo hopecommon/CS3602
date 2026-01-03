@@ -1,4 +1,6 @@
 import torch
+import time
+import json
 from tqdm import tqdm
 import os
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -11,7 +13,10 @@ device = "cuda"
 
 args = parse_args()
 
-data = load_dataset(args.dataset_name, args.task, split=args.split)
+if args.dataset_name == "pg19":
+    data = load_dataset(args.dataset_name, split=args.split)
+else:
+    data = load_dataset(args.dataset_name, args.task, split=args.split)
 
 model, tokenizer = load(args.model_name_or_path)
 
@@ -76,6 +81,9 @@ for text in data["text"][: args.num_samples]:
     seq_len = encodings.input_ids.size(1)
     print(f"seq_len: {seq_len}")
     pbar = tqdm(range(0, seq_len - 1))
+    
+    start_time = time.time()
+    torch.cuda.reset_peak_memory_stats()
 
     for idx in pbar:
         input_ids = encodings.input_ids[:, idx : idx + 1].to(device)
@@ -92,9 +100,21 @@ for text in data["text"][: args.num_samples]:
             if kv_cache is not None:
                 past_key_values = kv_cache(past_key_values)
         nlls.append(neg_log_likelihood)
-        pbar.set_description(
-            f"nll: {neg_log_likelihood.item():.2f}, ppl: {torch.exp(neg_log_likelihood).item():.2f}"
-        )
+        
+        if (idx + 1) % 100 == 0:
+            torch.cuda.synchronize()
+            mem_usage = torch.cuda.max_memory_allocated() / (1024 ** 2)
+            elapsed = time.time() - start_time
+            avg_speed = (idx + 1) / elapsed
+            pbar.set_description(
+                f"nll: {neg_log_likelihood.item():.2f}, ppl: {torch.exp(neg_log_likelihood).item():.2f}, "
+                f"mem: {mem_usage:.0f}MB, spd: {avg_speed:.1f}t/s"
+            )
+        else:
+            pbar.set_description(
+                f"nll: {neg_log_likelihood.item():.2f}, ppl: {torch.exp(neg_log_likelihood).item():.2f}"
+            )
+            
         print(neg_log_likelihood.item(), file=f, flush=True)
         num_eval_tokens += 1
         if args.num_eval_tokens is not None and num_eval_tokens >= args.num_eval_tokens:
