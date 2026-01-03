@@ -22,6 +22,7 @@ param (
 )
 
 $ErrorActionPreference = "Stop"
+$RepoRoot = $PSScriptRoot
 
 # ------------------------------------------------------------------------------
 # Load .env if present
@@ -155,7 +156,7 @@ function Run-Repeated {
         [string[]]$ExtraArgs
     )
     
-    $argsList = @("experiments/paper/run_repeated_eval.py", "--warmup", $env:WARMUP_RUNS, "--runs", $env:REPEAT_RUNS)
+    $argsList = @((Join-Path $RepoRoot "experiments/paper/run_repeated_eval.py"), "--warmup", $env:WARMUP_RUNS, "--runs", $env:REPEAT_RUNS)
     if ($SKIP_EXISTING -eq "1") {
         $argsList += "--skip-existing"
     }
@@ -176,7 +177,7 @@ function Ensure-Fixed-Baselines {
     Write-Host "Fixed baselines missing; generating them now (runs=$env:BASELINE_RUNS)..."
     
     $argsList = @(
-        "experiments/run_fixed_baseline.py",
+        (Join-Path $RepoRoot "experiments/run_fixed_baseline.py"),
         "--model-name", $env:MODEL_NAME,
         "--dtype", "float16",
         "--n-sink", $env:BASELINE_SINK,
@@ -206,7 +207,7 @@ function Ensure-Baseline-Link {
     # Check existing destination
     if ((-not $Force) -and (Test-Path $Dst)) {
         $checkArgs = @(
-            "experiments/paper/check_baseline_compat.py",
+            (Join-Path $RepoRoot "experiments/paper/check_baseline_compat.py"),
             "--baseline", $Dst,
             "--model-name", $env:MODEL_NAME,
             "--dtype", "float16",
@@ -241,7 +242,7 @@ function Ensure-Baseline-Link {
     # Check source compatibility
     if (Test-Path $Src) {
         $checkArgs = @(
-            "experiments/paper/check_baseline_compat.py",
+            (Join-Path $RepoRoot "experiments/paper/check_baseline_compat.py"),
             "--baseline", $Src,
             "--model-name", $env:MODEL_NAME,
             "--dtype", "float16",
@@ -263,7 +264,7 @@ function Ensure-Baseline-Link {
                 Write-Host "  STRICT_BASELINE_CHECK=1 -> regenerating baselines (overwrite, runs=$env:BASELINE_RUNS)..."
                 
                 $regenArgs = @(
-                    "experiments/run_fixed_baseline.py",
+                    (Join-Path $RepoRoot "experiments/run_fixed_baseline.py"),
                     "--model-name", $env:MODEL_NAME,
                     "--dtype", "float16",
                     "--n-sink", $env:BASELINE_SINK,
@@ -503,26 +504,26 @@ if ($env:RUN_SWEEPS -eq "1") {
 # 3) Generate LaTeX tables for the paper
 # ------------------------------------------------------------------------------
 Run-Command -Name "Generate LaTeX tables" -CmdArgs @(
-    "experiments/paper/generate_tables_tex.py",
+    (Join-Path $RepoRoot "experiments/paper/generate_tables_tex.py"),
     "--results-dir", $RESULTS_DIR,
     "--baseline-dir", $BASELINE_DIR,
     "--out", "NeurIPS/generated/tables.tex"
 )
 
 Run-Command -Name "Generate ablation tables" -CmdArgs @(
-    "experiments/paper/generate_ablations_tex.py",
+    (Join-Path $RepoRoot "experiments/paper/generate_ablations_tex.py"),
     "--results-dir", $RESULTS_DIR,
     "--out", "NeurIPS/generated/ablations.tex"
 )
 
 Run-Command -Name "Generate sweep tables (supplementary)" -CmdArgs @(
-    "experiments/paper/generate_sweeps_tex.py",
+    (Join-Path $RepoRoot "experiments/paper/generate_sweeps_tex.py"),
     "--results-dir", $RESULTS_DIR,
     "--out", "NeurIPS/generated/sweeps.tex"
 )
 
 Run-Command -Name "Generate negative-results table (qualitative)" -CmdArgs @(
-    "experiments/paper/generate_negative_results_tex.py",
+    (Join-Path $RepoRoot "experiments/paper/generate_negative_results_tex.py"),
     "--out", "NeurIPS/generated/negative_results.tex"
 )
 

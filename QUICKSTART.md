@@ -77,7 +77,7 @@ chmod +x run_comprehensive_comparisons.sh
   ```powershell
   python experiments/run_final_experiments.py --model-name EleutherAI/pythia-2.8b
   ```
-- **Run Paper Experiments (Windows)**:
+- **运行完整论文实验 (Run Paper Experiments)**:
   ```powershell
   # 运行完整的论文实验流程（基线、对比、消融、参数扫描）并生成 LaTeX 表格
   .\run_paper_experiments.ps1

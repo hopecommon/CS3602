@@ -2,6 +2,7 @@
 # Equivalent to run_fixed_evaluation.sh
 
 $ErrorActionPreference = "Stop"
+$RepoRoot = $PSScriptRoot
 
 # 1. Load .env file if it exists
 $EnvFile = ".env"
@@ -121,7 +122,7 @@ foreach ($dataset in $Datasets) {
         Write-Host "=== $dataset_tag $method ==="
         
         $argsList = @(
-            "experiments/run_decode_perplexity.py",
+            (Join-Path $RepoRoot "experiments/run_decode_perplexity.py"),
             "--model-name", $env:MODEL_NAME,
             "--method", $method,
             "--dataset-name", $actual_dataset,
@@ -141,10 +142,10 @@ foreach ($dataset in $Datasets) {
 # 8. Generate summary and plots
 Write-Host "=========================================="
 Write-Host "Generating summary table..."
-& $PYTHON experiments/summarize_fixed_eval_results.py --results-dir $env:RESULT_ROOT --output "$env:RESULT_ROOT\summary.md"
+& $PYTHON (Join-Path $RepoRoot "experiments/summarize_fixed_eval_results.py") --results-dir $env:RESULT_ROOT --output "$env:RESULT_ROOT\summary.md"
 
 Write-Host "Generating plots..."
-& $PYTHON experiments/plot_fixed_eval_results.py
+& $PYTHON (Join-Path $RepoRoot "experiments/plot_fixed_eval_results.py")
 
 # 9. Optional MIT Benchmark
 if ($env:RUN_MIT_OFFICIAL_BENCHMARK -eq "1") {
@@ -160,7 +161,7 @@ if ($env:RUN_MIT_OFFICIAL_BENCHMARK -eq "1") {
         New-Item -ItemType Directory -Force -Path "results\mit_official" | Out-Null
     }
 
-    & $PYTHON experiments/run_mit_official_benchmark.py `
+    & $PYTHON (Join-Path $RepoRoot "experiments/run_mit_official_benchmark.py") `
         --python $MIT_PYTHON `
         --model-name-or-path $MIT_MODEL `
         --data-json $MIT_DATA `
