@@ -41,21 +41,6 @@ python setup.py develop
 CUDA_VISIBLE_DEVICES=0 python examples/run_streaming_llama.py  --enable_streaming
 ```
 
-### Benchmark Throughput / VRAM (local)
-
-The script below prints decode tokens/s and CUDA peak memory for different KV-cache strategies:
-
-```bash
-# StreamingLLM (bounded KV)
-CUDA_VISIBLE_DEVICES=0 python examples/benchmark_streaming.py --model_name_or_path models/llama/llama-7b --mode streaming
-
-# Full KV (unbounded KV; enable pos-shift if you exceed the model context length)
-CUDA_VISIBLE_DEVICES=0 python examples/benchmark_streaming.py --model_name_or_path models/llama/llama-7b --mode full --enable_pos_shift
-
-# Sliding-window recomputation baseline (slow)
-CUDA_VISIBLE_DEVICES=0 python examples/benchmark_streaming.py --model_name_or_path models/llama/llama-7b --mode recompute --recompute_window_tokens 2048 --recompute_keep_start
-```
-
 ## FAQ
 
 1. **What does "working on infinite-length inputs" imply for LLMs?**

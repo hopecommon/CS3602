@@ -1,6 +1,4 @@
 import torch
-import time
-import json
 from tqdm import tqdm
 import os
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -13,18 +11,7 @@ device = "cuda"
 
 args = parse_args()
 
-if args.dataset_path:
-    print(f"Loading local dataset from {args.dataset_path}")
-    with open(args.dataset_path, "r", encoding="utf-8") as f:
-        content = json.load(f)
-        if isinstance(content, dict) and "text" in content:
-            data = {"text": [content["text"]]}
-        else:
-            raise ValueError("Local JSON file must contain a 'text' field.")
-elif args.dataset_name == "pg19":
-    data = load_dataset(args.dataset_name, split=args.split)
-else:
-    data = load_dataset(args.dataset_name, args.task, split=args.split)
+data = load_dataset(args.dataset_name, args.task, split=args.split)
 
 model, tokenizer = load(args.model_name_or_path)
 
