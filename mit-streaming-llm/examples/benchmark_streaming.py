@@ -3,6 +3,13 @@ import json
 import time
 from typing import List, Optional, Tuple
 
+import sys
+from pathlib import Path
+
+# Ensure the vendored MIT repo (`mit-streaming-llm/streaming_llm`) is importable when this
+# script is invoked from another working directory (e.g., repo root).
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -37,6 +44,11 @@ def _infer_kv_seq_dims(model_type: str) -> Tuple[int, int]:
 def _kv_seq_len(past_key_values, k_seq_dim: int) -> int:
     if past_key_values is None:
         return 0
+    if hasattr(past_key_values, "get_seq_length"):
+        try:
+            return int(past_key_values.get_seq_length())
+        except Exception:
+            pass
     return int(past_key_values[0][0].size(k_seq_dim))
 
 
@@ -166,6 +178,27 @@ def _prefill_in_chunks(
     k_seq_dim: int,
     show_progress: bool = False,
 ) -> Tuple[Optional[Tuple[torch.Tensor, ...]], int]:
+    # Transformers >= 4.46 may use the new Cache API (e.g., DynamicCache) for `past_key_values`.
+    # The MIT StartRecentKVCache expects the legacy cache format (list/tuple of tensors).
+    try:
+        from transformers.cache_utils import DynamicCache
+    except Exception:
+        DynamicCache = None  # type: ignore[misc,assignment]
+
+    def to_legacy(past):
+        if past is None:
+            return None
+        if hasattr(past, "to_legacy_cache"):
+            return past.to_legacy_cache()
+        return past
+
+    def from_legacy(legacy):
+        if legacy is None:
+            return None
+        if DynamicCache is None:
+            return legacy
+        return DynamicCache.from_legacy_cache(legacy)
+
     past_key_values = None
     total = input_ids.size(1)
     for start in _optional_tqdm(range(0, total, chunk_size), show_progress, "prefill"):
@@ -174,7 +207,9 @@ def _prefill_in_chunks(
         outputs = model(input_ids=chunk, past_key_values=past_key_values, use_cache=True)
         past_key_values = outputs.past_key_values
         if kv_cache is not None:
-            past_key_values = kv_cache(past_key_values)
+            legacy = to_legacy(past_key_values)
+            legacy = kv_cache(legacy)
+            past_key_values = from_legacy(legacy)
     return past_key_values, _kv_seq_len(past_key_values, k_seq_dim)
 
 
@@ -188,6 +223,25 @@ def _decode_full_or_streaming(
     k_seq_dim: int,
     show_progress: bool = False,
 ) -> Tuple[int, int]:
+    try:
+        from transformers.cache_utils import DynamicCache
+    except Exception:
+        DynamicCache = None  # type: ignore[misc,assignment]
+
+    def to_legacy(past):
+        if past is None:
+            return None
+        if hasattr(past, "to_legacy_cache"):
+            return past.to_legacy_cache()
+        return past
+
+    def from_legacy(legacy):
+        if legacy is None:
+            return None
+        if DynamicCache is None:
+            return legacy
+        return DynamicCache.from_legacy_cache(legacy)
+
     eos = getattr(model.config, "eos_token_id", None)
     next_token = torch.tensor([[eos if eos is not None else 0]], device=model.device)
     for _ in _optional_tqdm(range(gen_tokens), show_progress, "decode"):
@@ -199,7 +253,9 @@ def _decode_full_or_streaming(
         past_key_values = outputs.past_key_values
         next_token = outputs.logits[:, -1, :].argmax(dim=-1).unsqueeze(1)
         if kv_cache is not None:
-            past_key_values = kv_cache(past_key_values)
+            legacy = to_legacy(past_key_values)
+            legacy = kv_cache(legacy)
+            past_key_values = from_legacy(legacy)
     return gen_tokens, _kv_seq_len(past_key_values, k_seq_dim)
 
 
@@ -278,6 +334,12 @@ def main() -> None:
         action="store_true",
         help="Show a progress bar for prefill/decode (prints nothing by default).",
     )
+    parser.add_argument(
+        "--output_json",
+        type=str,
+        default=None,
+        help="If set, write a JSON file with benchmark metrics.",
+    )
 
     parser.add_argument("--recompute_window_tokens", type=int, default=2048)
     parser.add_argument("--recompute_keep_start", action="store_true")
@@ -296,7 +358,10 @@ def main() -> None:
     kv_cache = None
     if args.mode == "streaming":
         kv_cache = enable_streaming_llm(
-            model, start_size=args.start_size, recent_size=args.recent_size
+            model,
+            start_size=args.start_size,
+            recent_size=args.recent_size,
+            enable_pos_shift=args.enable_pos_shift,
         )
     elif args.mode == "full" and args.enable_pos_shift:
         _enable_pos_shift_only(model)
@@ -367,6 +432,14 @@ def main() -> None:
 
     decode_peak = _read_cuda_peak_stats()
 
+    decode_toks_per_s = float(produced / decode_s) if decode_s > 0 else 0.0
+    peak_mem_mb = 0.0
+    if decode_peak:
+        try:
+            peak_mem_mb = float(max(s["max_allocated_mb"] for s in decode_peak))
+        except Exception:
+            peak_mem_mb = 0.0
+
     print(f"mode: {args.mode}")
     print(f"model_type: {model_type}")
     print(f"prefix_tokens: {args.prefix_tokens}")
@@ -375,7 +448,7 @@ def main() -> None:
     print(f"prefill_seconds: {prefill_s:.4f}")
     print(f"decode_seconds: {decode_s:.4f}")
     if decode_s > 0:
-        print(f"decode_tokens_per_second: {produced / decode_s:.2f}")
+        print(f"decode_tokens_per_second: {decode_toks_per_s:.2f}")
     print(f"kv_len_after_prefill: {kv_len_after_prefill}")
     print(f"kv_len_after_decode: {kv_len_after_decode}")
     if prefill_peak:
@@ -390,6 +463,43 @@ def main() -> None:
                 f"cuda:{s['device']} decode_peak_allocated_mb={s['max_allocated_mb']:.1f} "
                 f"decode_peak_reserved_mb={s['max_reserved_mb']:.1f}"
             )
+
+    if args.output_json:
+        out = {
+            "script": "mit-streaming-llm/examples/benchmark_streaming.py",
+            "mode": args.mode,
+            "model_name_or_path": args.model_name_or_path,
+            "model_type": model_type,
+            "device": args.device,
+            "start_size": int(args.start_size),
+            "recent_size": int(args.recent_size),
+            "prefix_tokens": int(args.prefix_tokens),
+            "prefill_chunk_size": int(args.prefill_chunk_size),
+            "gen_tokens_requested": int(args.gen_tokens),
+            "gen_tokens_produced": int(produced),
+            "data_json": args.data_json,
+            "data_text_key": args.data_text_key,
+            "data_take": args.data_take,
+            "recompute_window_tokens": int(args.recompute_window_tokens),
+            "recompute_keep_start": bool(args.recompute_keep_start),
+            "enable_pos_shift": bool(args.enable_pos_shift),
+            "metrics": {
+                "prefill_sec": float(prefill_s),
+                "decode_sec": float(decode_s),
+                "decode_tokens_per_second": float(decode_toks_per_s),
+                "tpot_ms": float(decode_s / max(int(produced), 1) * 1000.0),
+                "peak_memory_mb": float(peak_mem_mb),
+                "kv_len_after_prefill": int(kv_len_after_prefill),
+                "kv_len_after_decode": int(kv_len_after_decode),
+            },
+            "cuda_peak": {
+                "prefill": prefill_peak,
+                "decode": decode_peak,
+            },
+        }
+        with open(args.output_json, "w", encoding="utf-8") as f:
+            json.dump(out, f, indent=2)
+        print(f"Wrote benchmark JSON to: {args.output_json}")
 
 
 if __name__ == "__main__":

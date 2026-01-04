@@ -25,7 +25,7 @@ def main() -> int:
 
     # Keep this table compact to fit a course paper; detailed logs live in docs/.
     tex = r"""
-\begin{table}[t]
+\begin{table}[H]
 \centering
 \caption{Summary of investigated but ineffective optimization routes in our batch-1 streaming setting.}
 \small
@@ -33,12 +33,12 @@ def main() -> int:
 \toprule
 Method & Outcome & Notes (see project logs) \\
 \midrule
-FlashAttention / FlashDecoding & No gain / hard to integrate & Streaming already bounds attention length; remaining bottlenecks are MLP and launch/framework overhead; RoPE re-alignment complicates clean integration. \\
-Speculative decoding & No gain / unreliable & Long-form generation yields low acceptance; cache consistency with pruning is fragile. \\
+FlashAttention / FlashDecoding & Inconclusive / low ROI & Integration is sensitive to environment and attention implementation; once streaming bounds attention length, speed is often dominated by MLP and launch/framework overhead. \\
+Speculative decoding & Negative result & In long-context workloads, draft/target mismatch yields low acceptance rates, making SpecDec slower than normal decoding. \\
 Quantization (TorchAO INT8/INT4) & Slower / unstable & INT8 WO v1 produced NaNs; v2 is stable but slower for batch-1 decode in our stack; INT4 backend dependencies were problematic. \\
 \texttt{torch.compile} / CUDA Graphs & Unstable & Repeated-run CUDA graph overwrite errors observed in rotary-embedding path; shape/cache semantics hinder capture. \\
 HF StaticCache & Incompatible & StaticCache assumes fixed cache updates; pruning can trigger device-side asserts (index out of bounds). \\
-CUDA fusion (residual/LN) & No gain & Amdahl's law: residual/LN is a small fraction; custom kernel launch overhead dominated, leading to slowdown. \\
+CUDA fusion (residual/LN) & Slower & Amdahl's law: residual/LN is a small fraction; custom kernel launch overhead dominated (0.92$\times$, TPOT +8.6\%). \\
 \bottomrule
 \end{tabular}
 \end{table}

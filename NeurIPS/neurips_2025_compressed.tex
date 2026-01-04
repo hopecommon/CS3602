@@ -1,7 +1,9 @@
 % !TeX program = pdflatex
 \documentclass{article}
 
-\usepackage{neurips_2025}
+% Use the preprint mode to disable anonymity (course submission).
+% (The "final" mode in this template expects an internal track name.)
+\usepackage[preprint]{neurips_2025}
 
 \usepackage[utf8]{inputenc}
 \usepackage[T1]{fontenc}
@@ -16,25 +18,33 @@
 \usepackage{amsmath}
 \usepackage{algorithm}
 \usepackage{algorithmic}
+\usepackage{graphicx}
+\usepackage{tikz}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\usepackage{placeins}
+\usepackage{float}
 
 \newcommand{\insertdata}[1]{\textcolor{red}{[INSERT #1]}}
+% To avoid accidentally including stale/incorrect generated numbers, we do not
+% include auto-generated tables by default. Set \usegeneratedtrue to enable.
+\newif\ifusegenerated
+\usegeneratedfalse
+% The course requires a strict 4-page main body. Appendix is optional.
+\newif\ifuseappendix
+\useappendixtrue
 
-\title{Efficient KV Cache Management for Long-Context LLM Inference:\\ Lazy Pruning, Slack, and Staged Eviction}
+\title{Efficient KV Cache Management for Long-Context LLM Inference:\\ Lazy Pruning for Practical StreamingLLM}
 
-% Course Assignment Submission - Two Authors + Advisor
+% Course assignment submission (non-anonymous).
 \author{%
-  学生姓名1 \\
-  学号: 学号1 \\
-  上海交通大学 计算机科学与工程系 \\
-  \texttt{email1@sjtu.edu.cn} \\
+  Jifan Lin (523030910057) \\
+  Shanghai Jiao Tong University \\
+  \texttt{ljf2570@sjtu.edu.cn} \\
   \And
-  学生姓名2 \\
-  学号: 学号2 \\
-  上海交通大学 计算机科学与工程系 \\
+  Second Author Name (XXXXXXXXXXXXX) \\
+  Shanghai Jiao Tong University \\
   \texttt{email2@sjtu.edu.cn} \\
-  \AND
-  指导教师: 教师姓名 \\
-  上海交通大学 计算机科学与工程系 \\
 }
 
 \begin{document}
@@ -42,21 +52,20 @@
 \maketitle
 
 \begin{abstract}
-Long-context LLM inference is bottlenecked by KV-cache growth and per-token runtime overhead. StreamingLLM~\cite{xiao2023streamingllm} bounds KV-cache size by retaining attention sinks and a recent-token window, but practical decoding can suffer from (i) non-trivial KV pruning overhead and (ii) quality degradation caused by periodic hard evictions, especially on long-form generation. We propose three lightweight, training-free KV-cache management mechanisms on top of StreamingLLM: \textbf{Lazy Pruning} (amortize pruning by triggering after $R$ tokens of overflow), \textbf{Slack} (a hard-cap buffer that enables staged evictions under bounded memory), and \textbf{Max\_Drop} (limit the maximum tokens evicted per prune event). We evaluate on Pythia-2.8B using WikiText-103 (sanity) and PG19 (long-context), and report TTFT/TPOT/throughput/memory/perplexity trade-offs. We also document why FlashAttention, speculative decoding, quantization, and CUDA operator fusion did not improve batch-1 streaming decode under our setting.
+Long-context LLM inference is bottlenecked by KV-cache growth and per-token runtime overhead. StreamingLLM~\cite{xiao2023streamingllm} bounds KV-cache size by retaining attention sinks and a recent-token window, but practical decoding can still suffer from \emph{non-trivial cache-management overhead}, especially for RoPE models where pruning changes cache positions and requires positional consistency. We implement a modular StreamingLLM stack on HuggingFace (Cache API) and propose \textbf{Lazy Pruning}: a training-free strategy that batches Start+Recent compaction and RoPE re-alignment, amortizing expensive cache slicing/copy/rotation across multiple decode steps. On PG19 (20k tokens, Auto-cap 2048), Lazy Pruning improves TPOT from 19.57ms (strict Start+Recent) to 14.37ms and achieves 6.81$\times$ speedup over a sliding-window recompute baseline; its PPL increases from 19.761 to 20.318 (+2.82\% vs recompute, +0.68\% vs strict Start+Recent). Additional negative results are summarized in Appendix.
 \end{abstract}
 
 \section{Introduction}
 Long-context LLM inference is challenging because both computation and memory scale with the context length. During autoregressive decoding, the KV cache grows linearly with the number of processed tokens, increasing attention cost and memory traffic. StreamingLLM~\cite{xiao2023streamingllm} mitigates this by keeping only (i) the first $S$ ``sink'' tokens and (ii) a sliding window of the most recent $W$ tokens, thereby bounding the effective KV-cache length.
 
 \paragraph{Motivation.}
-In our setting (Pythia-2.8B on NVIDIA A800), once attention length is bounded, decode becomes dominated by MLP and framework/launch overhead. Meanwhile, KV pruning itself can incur additional overhead due to slicing/copy and rotary-position re-alignment. More importantly, periodic hard eviction introduces distribution shifts that manifest as token-level NLL spikes and perplexity (PPL) degradation on long-form datasets. These observations motivate KV-management mechanisms that (i) reduce amortized pruning overhead and (ii) stage evictions to stabilize quality, without modifying attention kernels or model weights.
+In our setting (Pythia-2.8B on NVIDIA A800), once attention length is bounded, decode becomes dominated by MLP and framework/launch overhead. Meanwhile, KV pruning itself can incur additional overhead due to slicing/copy and rotary-position re-alignment. More importantly, periodic hard eviction introduces distribution shifts that manifest as token-level NLL spikes and perplexity (PPL) degradation on long-form datasets. These observations motivate a KV-management mechanism that reduces amortized pruning overhead without modifying attention kernels or model weights.
 
 \paragraph{Contributions.}
-We propose three training-free, modular mechanisms on top of StreamingLLM:
-(i) \textbf{Lazy Pruning}, which triggers pruning only after the cache overflow reaches $R$ tokens;
-(ii) \textbf{Slack}, a hard capacity buffer of $\sigma$ tokens that supports staged pruning;
-(iii) \textbf{Max\_Drop}, which limits the maximum tokens evicted per prune event to $\delta$.
-We provide a reproducible evaluation pipeline and summarize negative results for methods that are effective in other regimes but do not improve batch-1 streaming decode.
+We make three contributions centered on a \emph{practical} StreamingLLM implementation and an amortization mechanism:
+(i) we implement StreamingLLM on top of HuggingFace's Cache API while keeping attention modules unmodified, and explicitly handle RoPE consistency as a cache-side operation for plug-and-play comparisons;
+(ii) we propose \textbf{Lazy Pruning}, which batches Start+Recent compaction and RoPE re-alignment to reduce amortized cache-management overhead in batch-1 decode;
+(iii) we provide a reproducible pipeline and a detailed exploration log of negative results, clarifying which optimizations do or do not transfer to batch-1 streaming decode.
 
 \section{Related Work}
 \label{sec:related}
@@ -67,7 +76,7 @@ Attention kernels such as FlashAttention aim to reduce attention IO cost~\cite{d
 
 \section{Method}
 \label{sec:method}
-We first define Start+Recent streaming, then formalize our three mechanisms.
+We first define Start+Recent streaming and our cache-side RoPE re-alignment, then formalize Lazy Pruning. Additional exploratory mechanisms are summarized in Appendix.
 
 \subsection{Preliminaries: Start+Recent StreamingLLM}
 Let $x_{1:t}$ be the processed prefix at decode step $t$. For each layer $\ell$, let $(\mathbf{K}_t^\ell,\mathbf{V}_t^\ell)$ denote the KV cache with sequence length $L_t$ along the cache dimension. Start+Recent streaming retains (i) the first $S$ sink tokens, and (ii) the most recent $W$ tokens. Define the soft capacity
@@ -78,7 +87,25 @@ Our code also supports optional \emph{non-core} retained tokens (e.g., overlap/r
 \begin{equation}
   C \triangleq C_0 + B.
 \end{equation}
-Unless stated otherwise, we use $B=0$ in paper experiments to isolate our three mechanisms.
+Unless stated otherwise, we use $B=0$ in paper experiments to isolate Lazy Pruning.
+\paragraph{Auto-cap (fixed total context budget).}
+To avoid confounds from changing the \emph{total} number of visible tokens, and to respect the model's maximum context length, we adopt an \textbf{Auto-cap} protocol in our evaluation.
+We fix a global cap $C_{\text{cap}}$ (e.g., $2048$ for Pythia-2.8B) and count all components that increase the visible KV length into the same budget:
+\begin{equation}
+S + W + \sigma + O + B \;\le\; C_{\text{cap}},
+\end{equation}
+where $\sigma$ is an optional slack budget (used only in exploratory experiments), $O$ is overlap (if enabled), and $B$ is the refresh budget.
+Equivalently, for a fixed $C_{\text{cap}}$ we derive the recent-window size as
+\begin{equation}
+W \;=\; C_{\text{cap}} - S - \sigma - O - B.
+\end{equation}
+This defines the post-prune \emph{target length} and prevents methods from silently seeing more tokens when enabling slack/overlap/refresh, making speed--quality comparisons reproducible. Under strict Start+Recent pruning ($R{=}1$), the cache is kept at $C_{\text{cap}}$ every step. Under Lazy Pruning with interval $R$, the cache is still pruned back to $C_{\text{cap}}$, but can temporarily overflow between prunes; in our implementation the peak cache length during a forward pass is bounded by $C_{\text{cap}}+R$ (Fig.~\ref{fig:kvlen}).
+\paragraph{Peak-length bound (fairness).}
+Because pruning is applied \emph{after} each forward pass, the effective attention length during forward can exceed the post-prune target. For a given pruning interval $R$, the forward-time cache length satisfies:
+\begin{equation}
+  L_t^{\text{fwd}} \le C_{\text{cap}} + R.
+\end{equation}
+We report speed and quality under a fixed post-prune target $C_{\text{cap}}$, and provide an overhead breakdown (Appendix~\ref{tab:profile_prune}) to attribute speedups to amortized cache-management overhead rather than attention-length effects.
 When pruning is performed, the retained index set is
 \begin{equation}
   \mathcal{I}_t \;=\; \{0,1,\ldots,S-1\}\;\cup\;\{L_t-W,\ldots,L_t-1\},
@@ -86,150 +113,158 @@ When pruning is performed, the retained index set is
 with the recent segment clamped to avoid overlap with the sink segment.
 
 \paragraph{RoPE consistency.}
-For rotary-position-embedding models (e.g., Pythia/GPT-NeoX), pruning changes token positions in the cache; therefore, cached keys must be re-aligned to the new positions. Let $p\in\mathcal{I}_t$ be an old token position and $p' = f_t(p)\in\{0,\ldots,|\mathcal{I}_t|-1\}$ be its new position after compaction. RoPE encodes position via per-dimension frequencies $\omega_i$ (from \texttt{inv\_freq}). Re-alignment is equivalent to applying a \emph{delta-rotation} with $\Delta p = p'-p$:
-\begin{equation}
-\begin{bmatrix}
-k'_{2i}\\k'_{2i+1}
-\end{bmatrix}
-\;=\;
-\begin{bmatrix}
-\cos(\omega_i \Delta p) & -\sin(\omega_i \Delta p)\\
-\sin(\omega_i \Delta p) & \cos(\omega_i \Delta p)
-\end{bmatrix}
-\begin{bmatrix}
-k_{2i}\\k_{2i+1}
-\end{bmatrix}.
-\end{equation}
-Our implementation exploits that Start+Recent yields a constant $\Delta p$ for the contiguous recent block (a constant shift), and falls back to the general per-token re-rotation when tokens are explicitly relocated (e.g., refresh tokens).
+For rotary-position-embedding models (e.g., Pythia/GPT-NeoX), pruning changes token positions in the cache; therefore, cached keys must be re-aligned to the new positions. We implement RoPE consistency as a cache-side operation (without modifying attention forwards); the derivation and implementation details are deferred to Appendix~\ref{app:rope}.
 
 \subsection{Lazy Pruning}
-Na\"ive streaming prunes as soon as the cache exceeds $C$, which can add overhead due to slicing/copy and KV relocation. We instead amortize pruning by allowing the cache to exceed $C$ by up to $R{-}1$ tokens before triggering a prune.
+Na\"ive streaming prunes as soon as the cache exceeds $C$, which can add overhead due to slicing/copy and KV relocation. We instead amortize pruning by triggering compaction only when overflow reaches a threshold $R$ (in code: \texttt{compress\_every}), reducing the frequency of expensive prune+RoPE re-alignment operations.
 Define overflow:
 \begin{equation}
   \mathrm{overflow}_t \triangleq L_t - C.
 \end{equation}
-Let $R$ be the \emph{overflow allowance} hyperparameter (in code: \texttt{compress\_every}). We allow $R=0$ to disable pruning for debugging (unbounded memory), and use $R\ge 1$ in all bounded-memory settings. Lazy pruning triggers only when overflow reaches $R$:
+Let $R$ be the \emph{pruning interval/allowance} hyperparameter (in code: \texttt{compress\_every}). In bounded-memory evaluation we use $R\ge 1$. Lazy pruning triggers only when overflow reaches $R$:
 \begin{equation}
-  \mathrm{PruneTrigger}(t) \triangleq \mathbb{1}[R>0]\cdot \mathbb{1}\big[\mathrm{overflow}_t \ge R\big].
+  \mathrm{PruneTrigger}(t) \triangleq \mathbb{1}\big[\mathrm{overflow}_t \ge R\big].
 \end{equation}
-This matches the implementation semantics and avoids the ambiguity that would arise from interpreting $R=0$ as ``prune immediately''.
+This choice explicitly trades a slightly larger instantaneous cache length for fewer expensive prune-and-realign events, which is effective when pruning overhead is non-negligible under batch-1 decode. Fig.~\ref{fig:kvlen} illustrates the resulting sawtooth behavior. For debugging, our code also supports disabling pruning via \texttt{compress\_every=0}; we do not use this mode in bounded-memory comparisons.
+\begin{figure}[t]
+\centering
+\input{generated/fig1_kv_length.tex}
+\caption{KV-cache length during decoding under Auto-cap. Strict Start+Recent ($R{=}1$) prunes every step and stays at $C_{\text{cap}}$. Lazy Pruning ($R{=}64$) reduces prune frequency at the cost of bounded oscillation; the peak forward-time length is bounded by $C_{\text{cap}}+R$. KV length is proportional to KV memory footprint and influences the amount of cache compaction work.}
+\label{fig:kvlen}
+\end{figure}
 
-\subsection{Slack (Hard-Cap Buffer)}
-Slack introduces a \emph{hard} capacity that bounds temporary cache growth during staged pruning. Specifically, we define
-\begin{equation}
-  H \triangleq C + \sigma,
-\end{equation}
-where $\sigma \ge 0$ is a fixed slack budget. In our implementation, $\sigma$ does \emph{not} change the pruning trigger; it caps the post-prune target length when combined with Max\_Drop (Sec.~\ref{subsec:maxdrop}).
-
-\subsection{Max\_Drop (Staged Eviction)}
-\label{subsec:maxdrop}
-Periodic pruning can cause ``eviction cliffs'' when a large block is removed at once, which we observed as token-level NLL spikes on long-form generation. Max\_Drop limits the maximum number of tokens evicted in a single prune event.
-
-Let $\delta \ge 0$ be the maximum drop size. When pruning is triggered, we set a target retained length
-\begin{equation}
-  L_t^\star \;=\;
-  \begin{cases}
-    C, & \delta = 0 \\
-    \min\big(\max(L_t-\delta,\; C),\; H\big), & \delta > 0
-  \end{cases}
-\end{equation}
-and prune the cache to keep exactly $L_t^\star$ tokens using the Start+Recent rule. This turns a single large eviction into multiple smaller evictions across steps while remaining within the hard capacity $H$.
-
-\paragraph{Hyperparameter interactions and a toy example.}
-When $\delta>0$, staged eviction can leave $L_t^\star > C$, so pruning may trigger again soon; this is intentional. A practical rule-of-thumb to avoid pruning \emph{every} step when the cache saturates at $H$ is to choose $\sigma < R$ (so that after pruning to $H$, the overflow remains $<R$ until enough new tokens arrive).
-For example, with $(S,W,R,\sigma,\delta)=(4,2044,32,16,32)$ (so $C=2048$, $H=2064$), if a step reaches $L_t=2090$ (overflow $=42$), we prune to $L_t^\star=\min(\max(2090-32,2048),2064)=2058$ and continue staging further evictions as decoding proceeds.
-
-\subsection{Algorithm Summary}
-Algorithm~\ref{alg:kv} summarizes the pruning control logic (RoPE re-alignment and buffer management are omitted for clarity).
-\begin{algorithm}[t]
-\caption{KV pruning with Lazy Pruning, Slack, and Max\_Drop}
-\label{alg:kv}
-\begin{algorithmic}[1]
-\REQUIRE sink size $S$, window size $W$, extra budget $B$ (default 0), overflow allowance $R$ (0 disables), slack $\sigma$, max\_drop $\delta$
-\STATE $C_0 \leftarrow S+W$, $C \leftarrow C_0 + B$, $H \leftarrow C+\sigma$
-\STATE observe cache length $L_t$
-\IF{$R=0$} \STATE \textbf{return} \ENDIF
-\IF{$L_t \le C$} \STATE \textbf{return} \ENDIF
-\IF{$L_t - C < R$} \STATE \textbf{return} \ENDIF
-\IF{$\delta = 0$}
-  \STATE $L_t^\star \leftarrow C$
-\ELSE
-  \STATE $L_t^\star \leftarrow \min(\max(L_t-\delta,\; C),\; H)$
-\ENDIF
-\STATE keep first $S$ tokens and most recent $(L_t^\star - S)$ tokens
-\STATE prune KV cache and re-align RoPE positions
-\end{algorithmic}
-\end{algorithm}
+\paragraph{Rule form.}
+Strict pruning (Start+Recent) prunes whenever $\mathrm{overflow}_t>0$. Lazy Pruning prunes only when $\mathrm{overflow}_t\ge R$, then compacts back to $C$ and re-aligns RoPE (Appendix~\ref{app:rope}).
 
 \section{Experiments}
 \label{sec:exp}
 
 \subsection{Setup}
-We evaluate on Pythia-2.8B. We use WikiText-103 as a short-context sanity check and PG19 as the primary long-context benchmark~\cite{pg19}. We report TTFT, TPOT (ms/token), throughput (tok/s), total runtime, peak GPU memory, and perplexity (PPL).
-\textbf{Baselines and fairness.} Our long-context evaluation must respect the model's maximum position length. Therefore, we compare methods under the same \emph{effective context cap} $C$ (Sec.~\ref{sec:method}): the non-streaming baseline uses a sliding window of length $C$ and recomputes attention each step (no KV cache), while StreamingLLM variants reuse KV cache and apply pruning/re-alignment to stay within the same cap. All methods share the same model, dataset segment, and evaluation protocol implemented in \texttt{experiments/eval\_streaming\_llm.py}.
+We evaluate on Pythia-2.8B. We use WikiText-103 as a short-context sanity check and PG19 as the primary long-context benchmark~\cite{pg19}. Due to space, the main paper focuses on TPOT, speedup over recompute, PPL, and peak GPU memory; additional metrics are logged by our evaluator.
+\textbf{Datasets.} We use WikiText-103~\cite{merity2016pointer} and PG19~\cite{pg19}.
+\textbf{Baselines and fairness.}
+We compare methods under the same fixed soft cap $C_{\text{cap}}$ (Auto-cap; Sec.~\ref{sec:method}). The non-streaming baseline uses a sliding window of length $C_{\text{cap}}$ and recomputes attention each step (no KV cache), while StreamingLLM variants reuse KV cache and apply pruning/re-alignment targeting a post-prune length of $C_{\text{cap}}$; Lazy Pruning may temporarily overflow between prunes but remains bounded.
+All methods share the same model, dataset segment, and evaluation protocol implemented in \texttt{experiments/eval\_streaming\_llm.py}.
 
-\paragraph{Protocol and repeatability.}
-To reduce measurement noise, our reproduction script runs a warmup pass followed by $N$ repeated trials for each configuration and reports mean and standard deviation (saved in JSON). Each JSON record includes environment fingerprints (GPU, driver, torch/CUDA) to prevent reusing baselines across incompatible environments.
+\paragraph{Protocol.}
+We use a fixed evaluation protocol implemented in \texttt{experiments/eval\_streaming\_llm.py} and report TPOT, speedup over recompute, PPL, and peak GPU memory.
 
 \subsection{Main Results and Ablations}
-We provide a one-click script (\texttt{run\_paper\_experiments.sh}) that runs all configurations and generates LaTeX tables automatically. If the tables are not generated yet, we show placeholders.
-\paragraph{Implementation-path fairness check.}
-To ensure that improvements are not caused by divergent code paths, we also report an \emph{Ours-framework-only} configuration that uses our wrapper implementation but matches Start+Recent semantics (MIT-style cache backend) with all proposed mechanisms disabled.
-\IfFileExists{generated/tables.tex}{
-  \input{generated/tables.tex}
-}{
+\paragraph{Comparison protocol.}
+We compare a strict Start+Recent baseline (immediate pruning, $R{=}1$) against our Lazy Pruning variant (batched pruning, $R{>}1$) under a fixed KV budget (Auto-cap, $S{+}W{=}2048$). This isolates the effect of pruning frequency and cache-management overhead under the same bounded-attention regime.
+\ifusegenerated
+  \IfFileExists{generated/tables.tex}{\input{generated/tables.tex}}{}
+\else
   \begin{table}[t]
   \centering
-  \caption{Main results on PG19 (long-context).}
+  \caption{Main results on PG19 (long-context) under Auto-cap $C_{\text{cap}}{=}2048$.}
   \small
   \begin{tabular}{lcccc}
   \toprule
-  Method & TPOT$\downarrow$ & Speedup$\uparrow$ & PPL$\downarrow$ & Peak Mem$\downarrow$ \\
-  \midrule
-  Baseline (Sliding Window, no KV) & \insertdata{TPOT} & 1.00$\times$ & \insertdata{PPL} & \insertdata{Mem} \\
-  StreamingLLM (MIT) & \insertdata{TPOT} & \insertdata{Speedup} & \insertdata{PPL} & \insertdata{Mem} \\
-  Ours (Lazy/Slack/Max\_Drop) & \insertdata{TPOT} & \insertdata{Speedup} & \insertdata{PPL} & \insertdata{Mem} \\
-  \bottomrule
-  \end{tabular}
-  \end{table}
-}
+  Method & TPOT$\downarrow$ & Speedup$\uparrow$ & PPL$\downarrow$ & Peak Mem (MB)$\downarrow$ \\
+	  \midrule
+	  Baseline (Sliding Window, no KV) & 97.91 & 1.00$\times$ & 19.761 & 5723 \\
+	  StreamingLLM (Start+Recent; strict prune) & 19.57 & 5.00$\times$ & 20.181 & 6941 \\
+	  Ours (Lazy Pruning; $R{=}64$) & 14.37 & 6.81$\times$ & 20.318 & 6941 \\
+	  \bottomrule
+	  \end{tabular}
+	  \end{table}
+\fi
+\paragraph{Main finding.}
+On PG19 under the same Auto-cap budget, Lazy Pruning reduces TPOT from 19.57ms (strict Start+Recent, $R{=}1$) to 14.37ms ($R{=}64$), a further 1.36$\times$ improvement over strict pruning, with a small additional PPL increase (20.181 $\rightarrow$ 20.318) and unchanged peak memory in our evaluator.
+\textbf{Evidence for amortization.} Under a controlled PG19 probe where only $R$ changes, the forward-time component stays nearly constant while cache-update overhead drops sharply as prune events become infrequent, consistent with a simple decomposition $\mathrm{TPOT}\approx T_{\text{fwd}} + T_{\text{update}}/R$ (Appendix~\ref{tab:profile_prune}).
+\paragraph{Fairness and measurement notes.}
+Auto-cap fixes the post-prune target length to $C_{\text{cap}}{=}2048$, while Lazy Pruning allows bounded overflow between prunes with peak forward-time length $C_{\text{cap}}{+}R$. Peak GPU memory is measured as \texttt{torch.cuda.max\_memory\_allocated()} in our evaluator; the additional KV introduced by $R{=}64$ is small relative to total memory and may not change the rounded peak value.
 
 \paragraph{Ablations.}
-\IfFileExists{generated/ablations.tex}{
-  \input{generated/ablations.tex}
-}{
-  \begin{table}[t]
-  \centering
-  \caption{Ablation placeholders (generated by script).}
-  \small
-  \begin{tabular}{lccc}
-  \toprule
-  Setting & TPOT$\downarrow$ & Speedup$\uparrow$ & PPL$\downarrow$ \\
-  \midrule
-  Ours w/o Slack & \insertdata{TPOT} & \insertdata{Speedup} & \insertdata{PPL} \\
-  Ours w/o Max\_Drop & \insertdata{TPOT} & \insertdata{Speedup} & \insertdata{PPL} \\
-  Ours (full) & \insertdata{TPOT} & \insertdata{Speedup} & \insertdata{PPL} \\
-  \bottomrule
-  \end{tabular}
-  \end{table}
-}
+We report the full ablation ladder, additional $R$ settings, and exploratory quality heuristics (Slack/Max\_Drop, overlap/refresh) in Appendix~\ref{app:full-results}. In the main body we focus on the strict ($R{=}1$) vs lazy ($R{=}64$) contrast as the primary effect.
 
 \section{Discussion}
 \label{sec:negative}
-\paragraph{Why do popular inference accelerations fail in batch-1 streaming?}
-In our setting, streaming bounds attention length, shifting the bottleneck toward MLP and framework/launch overhead. Therefore, further optimizing attention kernels can have limited impact. Moreover, methods that assume static shapes or stable cache semantics may be incompatible with pruning and RoPE re-alignment in streaming decode.
-
-\paragraph{Attempts and analysis of ineffective methods.}
-We tested several common acceleration routes (see our project log in \texttt{docs/}): (i) FlashAttention integration was non-trivial under RoPE re-alignment and did not improve batch-1 TPOT in our environment; (ii) speculative decoding was unreliable on long-form generation and incompatible with streaming cache management; (iii) quantization via TorchAO exhibited numerical issues (INT8 v1) and remained slower even when stabilized (INT8 v2) in batch-1 streaming decode; (iv) \texttt{torch.compile} with CUDA Graphs was unstable due to overwritten outputs in rotary-embedding paths; (v) HuggingFace StaticCache conflicted with pruning updates and triggered device-side asserts. These results highlight that strong batch-inference accelerations do not directly transfer to batch-1 streaming decode.
-
-\IfFileExists{generated/negative_results.tex}{
-  \input{generated/negative_results.tex}
-}{}
+\paragraph{Bottleneck shift: forward dominates after cache management is amortized.}
+After StreamingLLM bounds the attention length and Lazy Pruning amortizes prune+RoPE re-alignment overhead, most remaining runtime concentrates in the model forward pass. We evaluated several standard accelerations (FlashAttention, speculative decoding, quantization, \texttt{torch.compile}/CUDA Graphs, StaticCache, and a CUDA micro-kernel), but none provided consistent net gains in our batch-1 long-context streaming regime (Appendix~\ref{app:neg}).
 
 \section{Conclusion}
-We presented three modular KV-cache management mechanisms for StreamingLLM: Lazy Pruning, Slack, and Max\_Drop. Our method is training-free and targets long-context decoding where pruning overhead and eviction-induced quality loss become important. We provide a reproducible pipeline and report negative results to clarify which acceleration techniques do or do not apply in this regime.
+We present a practical StreamingLLM implementation on HuggingFace and a single effective optimization: Lazy Pruning, which amortizes Start+Recent compaction and RoPE re-alignment overhead in batch-1 streaming decode. On PG19, Lazy Pruning achieves 6.81$\times$ speedup over a sliding-window recompute baseline (vs 5.00$\times$ for strict Start+Recent) under a fixed context budget with minor PPL degradation (+2.82\% vs recompute, +0.68\% vs strict).
 
-\bibliographystyle{plain}
+\ifuseappendix
+  \clearpage
+  \FloatBarrier
+  \appendix
+  \renewcommand{\thetable}{A\arabic{table}}
+  \setcounter{table}{0}
+  \section{Appendix}
+  \FloatBarrier
+
+  \subsection{Limitations and future work}
+  Our results suggest that in a bounded-attention, batch-1 decoding regime, end-to-end latency quickly becomes forward dominated once KV length is capped and cache-update costs are amortized. In this regime, Lazy Pruning yields a measurable TPOT reduction with only a small additional PPL increase under a fixed post-prune target length.
+  However, our approach has several limitations. (i) The remaining speed bottleneck is the model forward pass (GEMMs and associated pointwise/LN ops); further gains likely require kernel- or graph-level optimization beyond cache management. (ii) Lazy Pruning permits bounded overflow ($C_{\text{cap}}{+}R$ peak forward-time length), and our peak-memory reporting uses \texttt{torch.cuda.max\_memory\_allocated()}, which can be insensitive to small KV differences at MB granularity; repeated runs and finer-grained reporting (allocated vs reserved; mean$\pm$std) are needed. (iii) We observe a small PPL increase relative to strict Start+Recent and did not find consistently beneficial quality-oriented heuristics under Auto-cap, indicating that improving quality without regressing speed may require different cache-consistency mechanisms.
+  Future work includes: (i) cache layouts with static/ring-buffer semantics to better support compilation/graph capture; (ii) fused transformer-block implementations or alternative backends to reduce forward overhead; and (iii) broader evaluation across models, longer contexts, and multiple runs to quantify variance and robustness.
+
+  \subsection{Implementation notes and pseudocode}
+  \label{app:impl}
+  We summarize the core pruning rule (Start+Recent) and our Lazy Pruning trigger ($R$) in Algorithm~\ref{alg:kv}. This pseudocode matches the implementation setting used in our evaluator (Auto-cap, prune-to-$C_{\text{cap}}$).
+
+  \begin{algorithm}[h]
+  \caption{KV pruning with Lazy Pruning (implementation-level summary)}
+  \label{alg:kv}
+  \small
+  \begin{algorithmic}[1]
+  \REQUIRE sink size $S$, window size $W$, extra budget $B$ (default 0), pruning interval $R\ge 1$
+   \STATE $C \leftarrow S+W+B$
+   \STATE observe cache length $L_t$
+   \IF{$L_t \le C$} \STATE \textbf{return} \ENDIF
+   \IF{$L_t - C < R$} \STATE \textbf{return} \ENDIF
+   \STATE keep first $S$ tokens and most recent $(C - S)$ tokens
+   \STATE prune KV cache and re-align RoPE positions
+  \end{algorithmic}
+  \end{algorithm}
+
+  \subsection{RoPE consistency derivation}
+  \label{app:rope}
+  For rotary-position-embedding models, pruning changes token positions in the cache; therefore cached keys must be re-aligned to the new positions.
+  Let $p$ be an old token position and $p'$ its new position after compaction. RoPE encodes position via per-dimension frequencies $\omega_i$ (from \texttt{inv\_freq}). Re-alignment is equivalent to a delta rotation with $\Delta p = p'-p$:
+  \begin{equation}
+  \begin{bmatrix}
+  k'_{2i}\\k'_{2i+1}
+  \end{bmatrix}
+  =
+  \begin{bmatrix}
+  \cos(\omega_i \Delta p) & -\sin(\omega_i \Delta p)\\
+  \sin(\omega_i \Delta p) & \cos(\omega_i \Delta p)
+  \end{bmatrix}
+  \begin{bmatrix}
+  k_{2i}\\k_{2i+1}
+  \end{bmatrix}.
+  \end{equation}
+  In the Start+Recent setting, the recent block undergoes a constant position shift, enabling reuse of rotation factors across layers.
+
+\subsection{Full experimental results}
+\label{app:full-results}
+  % Do not repeat the main-table numbers here; we only include additional
+  % sanity checks and breakdowns.
+  \IfFileExists{generated/wikitext_sanity.tex}{\input{generated/wikitext_sanity.tex}}{}
+  \IfFileExists{generated/profile_prune_overhead.tex}{\input{generated/profile_prune_overhead.tex}}{}
+  \IfFileExists{generated/ablations.tex}{\input{generated/ablations.tex}}{}
+
+  \subsection{Negative results (evidence-backed)}
+  \label{app:neg}
+  \IfFileExists{generated/negative_results.tex}{\input{generated/negative_results.tex}}{}
+
+  \paragraph{Speculative decoding in long-context workloads.}
+  We evaluated speculative decoding with small/medium draft models in a long-context PG19 workload. While a \emph{draft=target} sanity check achieved near-perfect acceptance, using smaller drafts led to low acceptance rates and poor tokens-per-target-forward, making speculative decoding slower than normal decoding. We attribute this to draft/target distribution mismatch at long positions.
+
+  \paragraph{FlashAttention integration.}
+  We prepared an evaluation path that can switch attention backends (math/SDPA/FlashAttention when available). In our regime, streaming already bounds attention length, so overall speed is often dominated by MLP and framework/launch overhead; additionally, FlashAttention availability depends on GPU/driver/toolchain, making it difficult to include as a stable default in the reproducible mainline.
+
+  \paragraph{Fused CUDA residual add.}
+  We implemented and rigorously validated a fused CUDA residual-add kernel for GPT-NeoX (bit-exact hidden states and generation outputs), but it was slower (0.92$\times$, TPOT +8.6\%), consistent with Amdahl's law and kernel-launch dominated micro-ops.
+
+  \paragraph{MIT reference implementation notes.}
+  The MIT StreamingLLM reference repo applies \texttt{pos\_shift} patches inside model attention forwards, while our implementation preserves HuggingFace attention modules and performs RoPE consistency as cache-side operations. Under our Transformers version, we observed that the MIT long-PPL script did not produce consistent metrics for GPT-NeoX; therefore we avoid drawing quality claims from cross-codebase PPL and focus on within-evaluator comparisons.
+\fi
+
+\bibliographystyle{plainnat}
 \bibliography{references}
 
 \end{document}

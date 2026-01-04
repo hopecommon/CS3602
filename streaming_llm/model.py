@@ -50,6 +50,7 @@ class StreamingLLMWrapper:
         refresh_budget: int = 0,
         refresh_policy: str = "none",
         reuse_rotation: bool = True,
+        use_staging_buffers: bool = True,
     ):
         self.model = model
         self.n_sink = n_sink
@@ -79,6 +80,7 @@ class StreamingLLMWrapper:
             raise ValueError(f"cache_slack must be >= 0, got {cache_slack}")
         self.cache_slack = cache_slack
         self.reuse_rotation = reuse_rotation
+        self.use_staging_buffers = bool(use_staging_buffers)
 
         self._enabled = False
         self._layer_infos = self._collect_layer_infos()
@@ -91,6 +93,10 @@ class StreamingLLMWrapper:
         self._step = 0
         self._last_prune: Optional[dict] = None
         self._prune_events: List[dict] = []
+        # To avoid overly frequent prune events (which can dominate TPOT), we
+        # optionally rate-limit pruning when staged eviction is enabled.
+        # This is especially important when combining Slack + Max_Drop.
+        self._cooldown_until_step: int = 0
 
     # ---------------------------------------------------------------------
     # Context manager helpers
@@ -159,13 +165,37 @@ class StreamingLLMWrapper:
         if overflow_soft < self.compress_every:
             self._step += 1
             return
+        # If we are in a cooldown window (after a staged prune), skip pruning
+        # unless we hit the hard limit (emergency).
+        if self.max_drop > 0 and self.cache_slack > 0 and self._step < self._cooldown_until_step:
+            if seq_len <= hard_limit:
+                self._step += 1
+                return
 
         indices = None
         slice_info = None
         use_middle_refresh = self.refresh_policy == "middle"
         if self.max_drop > 0:
-            target_len = max(seq_len - self.max_drop, soft_limit)
-            target_len = min(target_len, hard_limit)
+            # Staged eviction: limit how much we drop per prune event, but avoid
+            # increasing prune frequency (which hurts TPOT).
+            #
+            # We keep pruning cadence governed by `compress_every` and enforce a
+            # cooldown of `compress_every` steps after a non-emergency prune.
+            #
+            # Additionally, to prevent hitting the hard cap before the cooldown
+            # ends, we ensure:
+            #   target_len + (compress_every - 1) <= hard_limit
+            # so the cache can grow for the next `compress_every-1` tokens
+            # without forcing another prune.
+            safe_target_max = hard_limit - max(0, self.compress_every - 1)
+            if safe_target_max < soft_limit:
+                # Not enough slack to stage safely; fall back to full prune.
+                target_len = soft_limit
+            else:
+                target_len = max(seq_len - self.max_drop, soft_limit)
+                target_len = min(target_len, safe_target_max)
+            # Rate-limit subsequent prunes unless we hit the hard limit.
+            self._cooldown_until_step = self._step + max(1, self.compress_every)
         else:
             target_len = soft_limit
         if self._supports_slice_api:
@@ -223,12 +253,20 @@ class StreamingLLMWrapper:
                     recent_start = recent_start_base
                     kept = sink_count + recent_keep + refresh_count
 
-                buffer_key = self._get_or_init_buffer(
-                    self._layer_key_buffers, layer_idx, key_states
-                )
-                buffer_value = self._get_or_init_buffer(
-                    self._layer_value_buffers, layer_idx, value_states
-                )
+                buffer_key = None
+                buffer_value = None
+                if self.use_staging_buffers:
+                    buffer_key = self._get_or_init_buffer(
+                        self._layer_key_buffers, layer_idx, key_states
+                    )
+                    buffer_value = self._get_or_init_buffer(
+                        self._layer_value_buffers, layer_idx, value_states
+                    )
+                elif refresh_count > 0:
+                    raise RuntimeError(
+                        "refresh_budget>0 currently requires staging buffers; "
+                        "re-run with use_staging_buffers=True or disable refresh."
+                    )
                 if use_middle_refresh and refresh_count > 0:
                     view_key = buffer_key[:, :, :kept, :]
                     view_value = buffer_value[:, :, :kept, :]

@@ -1,0 +1,91 @@
+{
+  "model": "EleutherAI/pythia-2.8b",
+  "dataset": "pg19:pg19",
+  "split": "test",
+  "max_length": 2048,
+  "stride": 1022,
+  "max_samples": 1,
+  "max_eval_tokens": 20000,
+  "total_tokens": 20000,
+  "streaming_llm": {
+    "n_sink": 32,
+    "window_size": 2016,
+    "overlap": 0,
+    "refresh_budget": 0,
+    "refresh_policy": "none",
+    "compress_every": 64,
+    "max_drop": 64,
+    "cache_slack": 0,
+    "implementation": "ours",
+    "cache_type": "StreamingKVCache",
+    "max_cache_size": 2048
+  },
+  "device": "cuda",
+  "dtype": "torch.float16",
+  "baseline_source": "loaded:results/paper_experiments/pg19_baseline.json",
+  "env": {
+    "git_commit": "3cb8e4bdd8b3fe6acbefc81a808510c829dcb4a8",
+    "python": "3.12.7",
+    "platform": "Linux-5.15.0-161-generic-x86_64-with-glibc2.35",
+    "torch": "2.9.1+cu128",
+    "cuda": "12.8",
+    "transformers": "4.57.3",
+    "hf_datasets": "2.21.0",
+    "gpu_name": "NVIDIA A800 80GB PCIe",
+    "driver": "535.216.01",
+    "pg19_sample_file": "data/pg19/long_context_50000.json",
+    "pg19_sample_length": "50000",
+    "wikitext_sample_file": "data/wikitext/long_context_4096.json",
+    "wikitext_sample_length": "4096"
+  },
+  "baseline": {
+    "perplexity": 19.761051177978516,
+    "perplexity_std": 0.0,
+    "runtime_sec": 1758.043125,
+    "runtime_sec_std": 0.0,
+    "prefill_sec": 0.4218440551757813,
+    "prefill_sec_std": 0.0,
+    "first_token_latency_sec": 0.09493971252441406,
+    "first_token_latency_sec_std": 0.0,
+    "decode_tokens": 17952,
+    "decode_tokens_std": 0.0,
+    "decode_time_sec": 1757.621280944824,
+    "decode_time_sec_std": 0.0,
+    "tpot_ms": 97.90671128257709,
+    "tpot_ms_std": 0.0,
+    "peak_memory_mb": 5722.51171875,
+    "peak_memory_mb_std": 0.0
+  },
+  "streaming": {
+    "perplexity": 20.317981719970703,
+    "perplexity_std": 0.0,
+    "runtime_sec": 260.2144375,
+    "runtime_sec_std": 0.0,
+    "prefill_sec": 0.32897592163085937,
+    "prefill_sec_std": 0.0,
+    "first_token_latency_sec": 0.16197369384765625,
+    "first_token_latency_sec_std": 0.0,
+    "decode_tokens": 17952,
+    "decode_tokens_std": 0.0,
+    "decode_time_sec": 259.88546157836913,
+    "decode_time_sec_std": 0.0,
+    "tpot_ms": 14.476685693982237,
+    "tpot_ms_std": 0.0,
+    "peak_memory_mb": 6941.4365234375,
+    "peak_memory_mb_std": 0.0
+  },
+  "metrics": {
+    "speedup": 6.756132141976173,
+    "ppl_increase_percent": 2.8183244756373305,
+    "tpot_ms": 14.476685693982237,
+    "peak_memory_mb": 6941.4365234375
+  },
+  "config_hash": "1ea8cc412cfa5eed",
+  "repeats": {
+    "warmup": 0,
+    "runs": 1,
+    "run_paths": [
+      "results/paper_experiments/sweeps/delta/pg19_delta64_runs/run_1.json"
+    ]
+  }
+}

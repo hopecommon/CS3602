@@ -21,7 +21,27 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from streaming_llm import StreamingLLMWrapper
-from eval_utils import load_tokenized_dataset, tqdm_wrap
+from experiments.eval_utils import load_tokenized_dataset, tqdm_wrap
+
+
+def _maybe_load_dotenv(repo_root: Path, overwrite: bool = False) -> None:
+    """
+    Load `.env` into os.environ without requiring extra dependencies.
+    This keeps dataset sample selection consistent across machines.
+    """
+    env_path = repo_root / ".env"
+    if not env_path.exists():
+        return
+    for raw in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if not overwrite and key in os.environ:
+            continue
+        os.environ[key] = value
 
 
 def parse_args() -> argparse.Namespace:
@@ -35,12 +55,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-samples", type=int, default=1)
     parser.add_argument("--max-eval-tokens", type=int, default=20000)
     parser.add_argument("--n-sink", type=int, default=4)
-    parser.add_argument("--window-size", type=int, default=2048)
+    # Auto-cap: fix a total budget and derive window size.
+    parser.add_argument("--cap-total", type=int, default=0, help="If >0, enforce auto-cap and derive window_size.")
+    parser.add_argument("--window-size", type=int, default=2048, help="Used when --cap-total=0.")
     parser.add_argument("--overlap", type=int, default=0)
     parser.add_argument("--refresh-budget", type=int, default=0)
     parser.add_argument("--refresh-policy", type=str, default="none", choices=["none", "uniform"])
     parser.add_argument("--compress-every", type=int, default=32)
+    parser.add_argument("--cache-slack", type=int, default=0)
+    parser.add_argument("--max-drop", type=int, default=0)
     parser.add_argument("--spike-window", type=int, default=32, help="Tokens after prune to measure spikes")
+    parser.add_argument("--max-decode-steps", type=int, default=0, help="If >0, only decode this many steps after prefill.")
+    parser.add_argument("--load-dotenv", action="store_true", default=True)
+    parser.add_argument("--no-dotenv", dest="load_dotenv", action="store_false")
     parser.add_argument("--output-dir", type=Path, default=Path("results/diagnose_prune"))
     return parser.parse_args()
 
@@ -64,11 +91,26 @@ def _percentile(values: list[float], q: float) -> float:
 def main() -> None:
     args = parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
+    if args.load_dotenv:
+        _maybe_load_dotenv(Path(__file__).resolve().parents[1])
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     torch_dtype = _dtype_from_arg(args.dtype)
     if device.type == "cpu" and torch_dtype != torch.float32:
         torch_dtype = torch.float32
+
+    if args.cap_total and args.cap_total > 0:
+        derived = args.cap_total - args.n_sink - args.cache_slack - args.overlap - args.refresh_budget
+        if derived <= 0:
+            raise ValueError(
+                f"Invalid auto-cap window_size={derived} (cap_total={args.cap_total}, sink={args.n_sink}, "
+                f"slack={args.cache_slack}, overlap={args.overlap}, refresh={args.refresh_budget})"
+            )
+        args.window_size = int(derived)
+        print(
+            f"Auto-cap enabled: cap_total={args.cap_total} => window_size={args.window_size} "
+            f"(sink={args.n_sink}, slack={args.cache_slack}, overlap={args.overlap}, refresh={args.refresh_budget})"
+        )
 
     print("加载 tokenizer...")
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
@@ -101,6 +143,8 @@ def main() -> None:
         refresh_budget=args.refresh_budget,
         refresh_policy=args.refresh_policy,
         compress_every=args.compress_every,
+        cache_slack=args.cache_slack,
+        max_drop=args.max_drop,
     )
 
     if encoded.device != device:
@@ -141,8 +185,10 @@ def main() -> None:
                 })
 
         decode_steps = max(0, seq_len - prefill_len)
+        if args.max_decode_steps and args.max_decode_steps > 0:
+            decode_steps = min(decode_steps, int(args.max_decode_steps))
         for pos in tqdm_wrap(
-            range(prefill_len - 1, seq_len - 1),
+            range(prefill_len - 1, prefill_len - 1 + decode_steps),
             total=decode_steps,
             desc="Diagnose decode",
             unit="tok",
@@ -232,14 +278,18 @@ def main() -> None:
         "model": args.model_name,
         "dataset": f"{args.dataset_name}:{args.dataset_config}",
         "dtype": args.dtype,
+        "cap_total": args.cap_total if args.cap_total else None,
         "window_size": args.window_size,
         "n_sink": args.n_sink,
         "overlap": args.overlap,
         "refresh_budget": args.refresh_budget,
         "refresh_policy": args.refresh_policy,
         "compress_every": args.compress_every,
+        "cache_slack": args.cache_slack,
+        "max_drop": args.max_drop,
         "total_tokens": seq_len,
         "prefill_len": prefill_len,
+        "decode_steps": decode_steps,
         "baseline_nll_median": baseline_nll,
         "kv_len_min": min(kv_lengths) if kv_lengths else prefill_len,
         "kv_len_mean": sum(kv_lengths) / len(kv_lengths) if kv_lengths else prefill_len,
@@ -260,8 +310,10 @@ def main() -> None:
     }
 
     output_prefix = (
-        f"{args.dataset_name}_w{args.window_size}_s{args.n_sink}"
-        f"_o{args.overlap}_r{args.refresh_budget}_c{args.compress_every}"
+        f"{args.dataset_name}_cap{args.cap_total or (args.n_sink + args.window_size)}"
+        f"_S{args.n_sink}_W{args.window_size}"
+        f"_K{args.compress_every}_sigma{args.cache_slack}_delta{args.max_drop}"
+        f"_o{args.overlap}_r{args.refresh_budget}"
     )
     csv_path = args.output_dir / f"{output_prefix}_per_token.csv"
     with csv_path.open("w", newline="", encoding="utf-8") as f:

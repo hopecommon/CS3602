@@ -1,0 +1,114 @@
+{
+  "script": "mit-streaming-llm/examples/benchmark_streaming.py",
+  "mode": "recompute",
+  "model_name_or_path": "EleutherAI/pythia-2.8b",
+  "model_type": "gpt_neox",
+  "device": "cuda",
+  "start_size": 32,
+  "recent_size": 2016,
+  "prefix_tokens": 20000,
+  "prefill_chunk_size": 512,
+  "gen_tokens_requested": 17952,
+  "gen_tokens_produced": 17952,
+  "data_json": "data/pg19/long_context_50000.json",
+  "data_text_key": "text",
+  "data_take": "head",
+  "recompute_window_tokens": 2048,
+  "recompute_keep_start": true,
+  "enable_pos_shift": false,
+  "metrics": {
+    "prefill_sec": 0.0,
+    "decode_sec": 1907.419453016948,
+    "decode_tokens_per_second": 9.411668719014838,
+    "tpot_ms": 106.2510836127979,
+    "peak_memory_mb": 5730.04541015625,
+    "kv_len_after_prefill": 0,
+    "kv_len_after_decode": 0
+  },
+  "cuda_peak": {
+    "prefill": [
+      {
+        "device": 0,
+        "max_allocated_mb": 5310.1943359375,
+        "max_reserved_mb": 5360.0
+      },
+      {
+        "device": 1,
+        "max_allocated_mb": 0.0,
+        "max_reserved_mb": 0.0
+      },
+      {
+        "device": 2,
+        "max_allocated_mb": 0.0,
+        "max_reserved_mb": 0.0
+      },
+      {
+        "device": 3,
+        "max_allocated_mb": 0.0,
+        "max_reserved_mb": 0.0
+      },
+      {
+        "device": 4,
+        "max_allocated_mb": 0.0,
+        "max_reserved_mb": 0.0
+      },
+      {
+        "device": 5,
+        "max_allocated_mb": 0.0,
+        "max_reserved_mb": 0.0
+      },
+      {
+        "device": 6,
+        "max_allocated_mb": 0.0,
+        "max_reserved_mb": 0.0
+      },
+      {
+        "device": 7,
+        "max_allocated_mb": 0.0,
+        "max_reserved_mb": 0.0
+      }
+    ],
+    "decode": [
+      {
+        "device": 0,
+        "max_allocated_mb": 5730.04541015625,
+        "max_reserved_mb": 6020.0
+      },
+      {
+        "device": 1,
+        "max_allocated_mb": 0.0,
+        "max_reserved_mb": 0.0
+      },
+      {
+        "device": 2,
+        "max_allocated_mb": 0.0,
+        "max_reserved_mb": 0.0
+      },
+      {
+        "device": 3,
+        "max_allocated_mb": 0.0,
+        "max_reserved_mb": 0.0
+      },
+      {
+        "device": 4,
+        "max_allocated_mb": 0.0,
+        "max_reserved_mb": 0.0
+      },
+      {
+        "device": 5,
+        "max_allocated_mb": 0.0,
+        "max_reserved_mb": 0.0
+      },
+      {
+        "device": 6,
+        "max_allocated_mb": 0.0,
+        "max_reserved_mb": 0.0
+      },
+      {
+        "device": 7,
+        "max_allocated_mb": 0.0,
+        "max_reserved_mb": 0.0
+      }
+    ]
+  }
+}

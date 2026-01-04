@@ -2,8 +2,8 @@
   "method": "baseline",
   "dataset": "wikitext:wikitext-103-v1",
   "perplexity": 9.371342658996582,
-  "total_time": 164.753328125,
-  "prefill_time": 1.0834298095703125,
-  "first_token_latency_sec": 0.09656745910644532,
+  "total_time": 163.99190625,
+  "prefill_time": 0.5936864624023438,
+  "first_token_latency_sec": 0.07575215911865234,
   "mode": "baseline"
 }

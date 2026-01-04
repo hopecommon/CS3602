@@ -35,6 +35,8 @@ def gpt_neox_pos_shift_attention_forward(
     layer_past: Optional[Tuple[torch.Tensor]] = None,
     use_cache: Optional[bool] = False,
     output_attentions: Optional[bool] = False,
+    cache_position: Optional[torch.LongTensor] = None,
+    **kwargs,
 ):
     has_layer_past = layer_past is not None
 

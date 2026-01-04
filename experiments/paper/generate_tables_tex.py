@@ -58,7 +58,12 @@ class Row:
     peak_mem_mb: str
 
 
-def _extract_row(name: str, data: Optional[dict[str, Any]], assume_speedup_one: bool = False) -> Row:
+def _extract_row(
+    name: str,
+    data: Optional[dict[str, Any]],
+    assume_speedup_one: bool = False,
+    baseline_tpot_ms: Optional[float] = None,
+) -> Row:
     if not data:
         return Row(name, PLACEHOLDER, "1.00$\\times$" if assume_speedup_one else PLACEHOLDER, PLACEHOLDER, PLACEHOLDER)
 
@@ -69,6 +74,10 @@ def _extract_row(name: str, data: Optional[dict[str, Any]], assume_speedup_one: 
     # Prefer "streaming" block when present (streaming eval output),
     # otherwise fall back to "baseline" (baseline-only JSON).
     block = streaming if streaming else baseline
+    # MIT reference JSONs (from `mit-streaming-llm/examples/eval_long_ppl.py`) store numbers
+    # directly under `metrics` without a "streaming"/"baseline" wrapper.
+    if not block and isinstance(metrics, dict) and "perplexity" in metrics:
+        block = metrics
 
     tpot = _fmt_num(block.get("tpot_ms"), ".2f")
     ppl = _fmt_num(block.get("perplexity"), ".3f")
@@ -78,6 +87,13 @@ def _extract_row(name: str, data: Optional[dict[str, Any]], assume_speedup_one: 
         speedup = "1.00$\\times$"
     else:
         speedup_val = metrics.get("speedup")
+        if speedup_val is None and baseline_tpot_ms is not None:
+            try:
+                cur_tpot = float(block.get("tpot_ms"))
+                if cur_tpot > 0:
+                    speedup_val = float(baseline_tpot_ms) / cur_tpot
+            except Exception:
+                speedup_val = None
         speedup = _fmt_num(speedup_val, ".2f")
         if speedup != PLACEHOLDER:
             speedup = f"{speedup}$\\times$"
@@ -87,9 +103,9 @@ def _extract_row(name: str, data: Optional[dict[str, Any]], assume_speedup_one: 
 
 def _table_main_pg19(rows: list[Row]) -> str:
     lines: list[str] = []
-    lines.append("\\begin{table}[t]")
+    lines.append("\\begin{table}[H]")
     lines.append("\\centering")
-    lines.append("\\caption{Main results on PG19 (long-context, \\emph{fill values via script output}).}")
+    lines.append("\\caption{Main results on PG19 (long-context) under Auto-cap $C_{\\text{cap}}{=}2048$.}")
     lines.append("\\small")
     lines.append("\\begin{tabular}{lcccc}")
     lines.append("\\toprule")
@@ -105,7 +121,7 @@ def _table_main_pg19(rows: list[Row]) -> str:
 
 def _table_main_wikitext(rows: list[Row]) -> str:
     lines: list[str] = []
-    lines.append("\\begin{table}[t]")
+    lines.append("\\begin{table}[H]")
     lines.append("\\centering")
     lines.append("\\caption{Sanity-check results on WikiText-103 (short-context).}")
     lines.append("\\small")
@@ -138,29 +154,30 @@ def main() -> int:
         args.baseline_dir / "wikitext_baseline_avg.json"
     )
 
-    pg19_mit = _load_json(args.results_dir / "pg19_mit.json")
-    pg19_ours_framework_only = _load_json(args.results_dir / "pg19_ours_framework_only.json")
+    pg19_start_recent = _load_json(args.results_dir / "pg19_start_recent.json")
     pg19_ours = _load_json(args.results_dir / "pg19_ours.json")
 
-    wikitext_mit = _load_json(args.results_dir / "wikitext_mit.json")
-    wikitext_ours_framework_only = _load_json(args.results_dir / "wikitext_ours_framework_only.json")
+    wikitext_start_recent = _load_json(args.results_dir / "wikitext_start_recent.json")
     wikitext_ours = _load_json(args.results_dir / "wikitext_ours.json")
+
+    pg19_baseline_tpot = None
+    if pg19_baseline and isinstance(pg19_baseline.get("baseline"), dict):
+        pg19_baseline_tpot = pg19_baseline["baseline"].get("tpot_ms")
+    wikitext_baseline_tpot = None
+    if wikitext_baseline and isinstance(wikitext_baseline.get("baseline"), dict):
+        wikitext_baseline_tpot = wikitext_baseline["baseline"].get("tpot_ms")
 
     pg19_rows = [
         _extract_row("Baseline (Sliding Window, no KV)", pg19_baseline, assume_speedup_one=True),
-        _extract_row("StreamingLLM (MIT, aligned $S,W$)", pg19_mit),
+        _extract_row("StreamingLLM (Start+Recent; strict prune)", pg19_start_recent, baseline_tpot_ms=pg19_baseline_tpot),
     ]
-    if pg19_ours_framework_only is not None:
-        pg19_rows.append(_extract_row("Ours-framework-only (Start+Recent)", pg19_ours_framework_only))
-    pg19_rows.append(_extract_row("Ours (aligned $S,W$)", pg19_ours))
+    pg19_rows.append(_extract_row("Ours (Lazy Pruning)", pg19_ours, baseline_tpot_ms=pg19_baseline_tpot))
     table_pg19 = _table_main_pg19(pg19_rows)
     wiki_rows = [
         _extract_row("Baseline (Sliding Window, no KV)", wikitext_baseline, assume_speedup_one=True),
-        _extract_row("StreamingLLM (MIT, aligned $S,W$)", wikitext_mit),
+        _extract_row("StreamingLLM (Start+Recent; strict prune)", wikitext_start_recent, baseline_tpot_ms=wikitext_baseline_tpot),
     ]
-    if wikitext_ours_framework_only is not None:
-        wiki_rows.append(_extract_row("Ours-framework-only (Start+Recent)", wikitext_ours_framework_only))
-    wiki_rows.append(_extract_row("Ours (aligned $S,W$)", wikitext_ours))
+    wiki_rows.append(_extract_row("Ours (Lazy Pruning)", wikitext_ours, baseline_tpot_ms=wikitext_baseline_tpot))
     table_wiki = _table_main_wikitext(wiki_rows)
 
     content = "\n\n".join([table_pg19, table_wiki]) + "\n"

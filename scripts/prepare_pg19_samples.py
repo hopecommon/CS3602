@@ -82,7 +82,13 @@ def main() -> None:
         dataset = load_dataset("pg19", split=args.split, streaming=True)
 
     targets = sorted(set(args.lengths))
-    quota = {t: args.samples_per_length for t in targets}
+    if not targets:
+        raise ValueError("--lengths must be non-empty")
+    max_target = max(targets)
+
+    # Collect samples in "sets": each chosen book yields one sample per target length.
+    # This avoids accidentally switching the underlying book when you change only the length.
+    quota_sets = int(args.samples_per_length)
     samples: List[dict] = []
     per_length_written: dict[int, int] = {t: 0 for t in targets}
 
@@ -98,11 +104,12 @@ def main() -> None:
         token_count = len(token_ids)
         if token_count == 0:
             continue
+        # Only pick books that can satisfy the largest target length, so all lengths come
+        # from the same underlying text for a given set.
+        if token_count < max_target:
+            continue
+
         for target in targets:
-            if quota[target] <= 0:
-                continue
-            if token_count < target:
-                continue
             truncated = tokenizer.decode(token_ids[:target], skip_special_tokens=False)
             samples.append(
                 {
@@ -115,14 +122,15 @@ def main() -> None:
                     "text": truncated,
                 }
             )
-            quota[target] -= 1
-            break
-        if all(v <= 0 for v in quota.values()):
+        quota_sets -= 1
+        if quota_sets <= 0:
             break
 
-    missing = {t: q for t, q in quota.items() if q > 0}
-    if missing:
-        raise RuntimeError(f"Unable to collect targets {missing}; increase max-books or lower lengths")
+    if quota_sets > 0:
+        raise RuntimeError(
+            f"Unable to collect {args.samples_per_length} sample set(s) that reach {max_target} tokens; "
+            "increase --max-books or lower --lengths"
+        )
 
     for sample in samples:
         length = sample["target_tokens"]

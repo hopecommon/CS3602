@@ -1,9 +1,9 @@
 {
   "method": "ours",
   "dataset": "pg19:",
-  "perplexity": 8.994733810424805,
-  "total_time": 294.121875,
-  "prefill_time": 0.5062491149902344,
-  "first_token_latency_sec": 0.01854080009460449,
+  "perplexity": 20.818979263305664,
+  "total_time": 274.63253125,
+  "prefill_time": 0.5041049194335937,
+  "first_token_latency_sec": 0.01874015998840332,
   "mode": "ours"
 }

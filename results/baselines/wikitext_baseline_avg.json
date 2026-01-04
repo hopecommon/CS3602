@@ -1,0 +1,54 @@
+{
+  "model": "EleutherAI/pythia-2.8b",
+  "dataset": "wikitext:wikitext-103-v1",
+  "split": "test",
+  "max_length": 2048,
+  "stride": 1022,
+  "max_samples": 64,
+  "max_eval_tokens": 4096,
+  "total_tokens": 4096,
+  "streaming_llm": {
+    "n_sink": 4,
+    "window_size": 2044,
+    "overlap": 0,
+    "refresh_budget": 0,
+    "refresh_policy": "none",
+    "compress_every": 1,
+    "max_drop": 0,
+    "cache_slack": 0,
+    "implementation": "ours",
+    "cache_type": "StreamingKVCache",
+    "max_cache_size": 2048
+  },
+  "baseline": {
+    "perplexity": 9.359184265136719,
+    "runtime_sec": 199.82940625,
+    "prefill_sec": 0.43274240112304685,
+    "first_token_latency_sec": 0.09442851257324218,
+    "decode_tokens": 2048,
+    "decode_time_sec": 199.39666384887695,
+    "tpot_ms": 97.36165226995945,
+    "peak_memory_mb": 5722.39013671875
+  },
+  "baseline_source": "averaged:1",
+  "device": "cuda",
+  "dtype": "torch.float16",
+  "env": {
+    "git_commit": "3cb8e4bdd8b3fe6acbefc81a808510c829dcb4a8",
+    "python": "3.12.7",
+    "platform": "Linux-5.15.0-161-generic-x86_64-with-glibc2.35",
+    "torch": "2.9.1+cu128",
+    "cuda": "12.8",
+    "transformers": "4.57.3",
+    "hf_datasets": "2.21.0",
+    "gpu_name": "NVIDIA A800 80GB PCIe",
+    "driver": "535.216.01",
+    "pg19_sample_file": "data/pg19/long_context_50000.json",
+    "pg19_sample_length": "50000",
+    "wikitext_sample_file": "data/wikitext/long_context_4096.json",
+    "wikitext_sample_length": "4096"
+  },
+  "runs": [
+    "results/baselines/wikitext/run_1.json"
+  ]
+}

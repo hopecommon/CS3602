@@ -147,6 +147,30 @@ def parse_args():
         help="Cache implementation override (e.g., static)"
     )
     parser.add_argument(
+        "--staging-buffers",
+        action="store_true",
+        default=True,
+        help="Use per-layer staging buffers for KV compaction (faster pruning, higher peak memory).",
+    )
+    parser.add_argument(
+        "--no-staging-buffers",
+        action="store_false",
+        dest="staging_buffers",
+        help="Disable staging buffers (lower peak memory, potentially slower pruning).",
+    )
+    parser.add_argument(
+        "--fp32-loss",
+        action="store_true",
+        default=True,
+        help="Compute cross-entropy loss in fp32 for numerically stable PPL (recommended).",
+    )
+    parser.add_argument(
+        "--no-fp32-loss",
+        action="store_false",
+        dest="fp32_loss",
+        help="Compute loss in model dtype (may be faster but can distort PPL).",
+    )
+    parser.add_argument(
         "--compress-every",
         type=int,
         default=4,
@@ -211,7 +235,11 @@ def parse_args():
 
 def main():
     args = parse_args()
-    target_cache = args.n_sink + args.window_size + args.overlap + args.refresh_budget
+    # `target_cache` is the *hard* cap that the decode loop should tolerate.
+    # Under the auto-cap design, we keep:
+    #   n_sink + window_size + overlap + refresh_budget + cache_slack == CAP_TOTAL (e.g., 2048)
+    # so Slack becomes measurable without changing the total budget.
+    target_cache = args.n_sink + args.window_size + args.overlap + args.refresh_budget + args.cache_slack
     if args.max_length < target_cache:
         print(
             f"警告: max_length({args.max_length}) < n_sink + window_size ({target_cache}), "
@@ -315,6 +343,7 @@ def main():
                 use_streaming=False,
                 max_cache_size=target_cache,
                 cache_implementation=args.cache_implementation,
+                fp32_loss=args.fp32_loss,
             )
             baseline_ppl = baseline_stats.perplexity
             baseline_time = baseline_stats.runtime_sec
@@ -390,6 +419,12 @@ def main():
             "max_samples": args.max_samples,
             "max_eval_tokens": args.max_eval_tokens,
             "total_tokens": encoded_dataset.shape[1],
+            "dataset_selector": {
+                "PG19_SAMPLE_FILE": os.environ.get("PG19_SAMPLE_FILE"),
+                "PG19_SAMPLE_LENGTH": os.environ.get("PG19_SAMPLE_LENGTH"),
+                "WIKITEXT_SAMPLE_FILE": os.environ.get("WIKITEXT_SAMPLE_FILE"),
+                "WIKITEXT_SAMPLE_LENGTH": os.environ.get("WIKITEXT_SAMPLE_LENGTH"),
+            },
             "streaming_llm": {
                 "n_sink": args.n_sink,
                 "window_size": args.window_size,
@@ -444,7 +479,8 @@ def main():
             compress_every=args.compress_every,
             max_drop=args.max_drop,
             cache_slack=args.cache_slack,
-            cache=cache_impl
+            cache=cache_impl,
+            use_staging_buffers=args.staging_buffers,
         )
         streaming_cache_name = streaming_wrapper.cache_name
         streaming_stats = compute_perplexity(
@@ -457,6 +493,7 @@ def main():
             streaming_wrapper=streaming_wrapper,
             max_cache_size=target_cache,
             cache_implementation=args.cache_implementation,
+            fp32_loss=args.fp32_loss,
         )
         streaming_ppl = streaming_stats.perplexity
         streaming_time = streaming_stats.runtime_sec
@@ -493,6 +530,12 @@ def main():
         "max_samples": args.max_samples,
         "max_eval_tokens": args.max_eval_tokens,
         "total_tokens": encoded_dataset.shape[1],
+        "dataset_selector": {
+            "PG19_SAMPLE_FILE": os.environ.get("PG19_SAMPLE_FILE"),
+            "PG19_SAMPLE_LENGTH": os.environ.get("PG19_SAMPLE_LENGTH"),
+            "WIKITEXT_SAMPLE_FILE": os.environ.get("WIKITEXT_SAMPLE_FILE"),
+            "WIKITEXT_SAMPLE_LENGTH": os.environ.get("WIKITEXT_SAMPLE_LENGTH"),
+        },
         "streaming_llm": {
             "n_sink": args.n_sink,
             "window_size": args.window_size,
@@ -505,6 +548,7 @@ def main():
             "implementation": args.streaming_mode,
             "cache_type": streaming_cache_name,
             "max_cache_size": target_cache,
+            "staging_buffers": bool(args.staging_buffers),
         },
         "device": str(device),
         "dtype": str(torch_dtype),

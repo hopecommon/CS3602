@@ -105,20 +105,22 @@ def main() -> int:
             [_extract_row(v, _load_json(r_dir / f"pg19_R{v}.json")) for v in r_values],
         )
     )
-    tex_parts.append(
-        _render_table(
-            "Sweep over Slack $\\sigma$ (PG19).",
-            "$\\sigma$",
-            [_extract_row(v, _load_json(s_dir / f"pg19_sigma{v}.json")) for v in sigma_values],
+    if any((s_dir / f"pg19_sigma{v}.json").exists() for v in sigma_values):
+        tex_parts.append(
+            _render_table(
+                "Sweep over Slack $\\sigma$ (PG19).",
+                "$\\sigma$",
+                [_extract_row(v, _load_json(s_dir / f"pg19_sigma{v}.json")) for v in sigma_values],
+            )
         )
-    )
-    tex_parts.append(
-        _render_table(
-            "Sweep over Max\\_Drop $\\delta$ (PG19).",
-            "$\\delta$",
-            [_extract_row(v, _load_json(d_dir / f"pg19_delta{v}.json")) for v in delta_values],
+    if any((d_dir / f"pg19_delta{v}.json").exists() for v in delta_values):
+        tex_parts.append(
+            _render_table(
+                "Sweep over Max\\_Drop $\\delta$ (PG19).",
+                "$\\delta$",
+                [_extract_row(v, _load_json(d_dir / f"pg19_delta{v}.json")) for v in delta_values],
+            )
         )
-    )
 
     args.out.write_text("\n".join(tex_parts), encoding="utf-8")
     print(f"Wrote sweep tables to: {args.out}")

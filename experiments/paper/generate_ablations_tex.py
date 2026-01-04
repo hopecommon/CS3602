@@ -54,6 +54,9 @@ def _extract_row(name: str, data: Optional[dict[str, Any]]) -> Row:
 
     block = data.get("streaming") or data.get("baseline") or {}
     metrics = data.get("metrics") or {}
+    # MIT reference JSON stores metrics directly under `metrics`.
+    if not block and isinstance(metrics, dict) and "perplexity" in metrics:
+        block = metrics
     tpot = _fmt_num(block.get("tpot_ms"), ".2f")
     ppl = _fmt_num(block.get("perplexity"), ".3f")
     speedup = _fmt_num(metrics.get("speedup"), ".2f")
@@ -64,9 +67,9 @@ def _extract_row(name: str, data: Optional[dict[str, Any]]) -> Row:
 
 def _render_table(rows: list[Row]) -> str:
     lines: list[str] = []
-    lines.append("\\begin{table}[t]")
+    lines.append("\\begin{table}[H]")
     lines.append("\\centering")
-    lines.append("\\caption{Ablation ladder on PG19 (aligned $S,W$): impact of Lazy, Slack, and Max\\_Drop.}")
+    lines.append("\\caption{Ablation ladder on PG19 (aligned $S,W$). Differences below \\textasciitilde1\\% may fall within run-to-run noise unless stated otherwise.}")
     lines.append("\\small")
     lines.append("\\begin{tabular}{lccc}")
     lines.append("\\toprule")
@@ -89,21 +92,42 @@ def main() -> int:
     args.out.parent.mkdir(parents=True, exist_ok=True)
 
     abl_dir = args.results_dir / "ablations"
-    a0_mit = _load_json(abl_dir / "pg19_A0_mit.json")
+    a0_start_recent = _load_json(args.results_dir / "pg19_start_recent.json")
     a_neg_lazy = _load_json(abl_dir / "pg19_Aneg_lazy_strict.json")
     a1_lazy = _load_json(abl_dir / "pg19_A1_lazy.json")
     a2_lazy_slack = _load_json(abl_dir / "pg19_A2_lazy_slack.json")
     a3_full = _load_json(abl_dir / "pg19_A3_full.json")
 
-    tex = _render_table(
-        [
-            _extract_row("MIT (Start+Recent)", a0_mit),
-            _extract_row("Ours w/o Lazy ($R{=}1,\\sigma{=}0,\\delta{=}0$)", a_neg_lazy),
-            _extract_row("+ Lazy", a1_lazy),
-            _extract_row("+ Lazy + Slack", a2_lazy_slack),
-            _extract_row("+ Lazy + Slack + Max\\_Drop", a3_full),
-        ]
-    )
+    def cfg_suffix(d: Optional[dict[str, Any]]) -> str:
+        if not d:
+            return ""
+        cfg = d.get("streaming_llm") or {}
+        parts = []
+        R = cfg.get("compress_every")
+        if R is not None:
+            parts.append(f"$R{{=}}{int(R)}$")
+        sigma = cfg.get("cache_slack")
+        if sigma:
+            parts.append(f"$\\sigma{{=}}{int(sigma)}$")
+        delta = cfg.get("max_drop")
+        if delta:
+            parts.append(f"$\\delta{{=}}{int(delta)}$")
+        if not parts:
+            return ""
+        return " (" + ", ".join(parts) + ")"
+
+    rows: list[Row] = [
+        _extract_row("Start+Recent (strict prune)" + cfg_suffix(a0_start_recent), a0_start_recent),
+        _extract_row("Start+Recent (strict prune; framework-only)" + cfg_suffix(a_neg_lazy), a_neg_lazy),
+        _extract_row("+ Lazy Pruning" + cfg_suffix(a1_lazy), a1_lazy),
+    ]
+    # Optional exploratory rows (only include if present to keep the paper compact).
+    if a2_lazy_slack is not None:
+        rows.append(_extract_row("+ (expl.) Slack" + cfg_suffix(a2_lazy_slack), a2_lazy_slack))
+    if a3_full is not None:
+        rows.append(_extract_row("+ (expl.) Slack + Max\\_Drop" + cfg_suffix(a3_full), a3_full))
+
+    tex = _render_table(rows)
     args.out.write_text(tex, encoding="utf-8")
     print(f"Wrote ablation table to: {args.out}")
     return 0

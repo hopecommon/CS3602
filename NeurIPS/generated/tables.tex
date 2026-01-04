@@ -1,19 +1,19 @@
-\begin{table}[t]
+\begin{table}[H]
 \centering
-\caption{Main results on PG19 (long-context, \emph{fill values via script output}).}
+\caption{Main results on PG19 (long-context) under Auto-cap $C_{\text{cap}}{=}2048$.}
 \small
 \begin{tabular}{lcccc}
 \toprule
 Method & TPOT$\downarrow$ & Speedup$\uparrow$ & PPL$\downarrow$ & Peak Mem (MB)$\downarrow$ \\
 \midrule
-Baseline (Full KV) & 100.53 & 1.00$\times$ & 19.761 & 5722 \\
-StreamingLLM (MIT) & [INSERT DATA] & [INSERT DATA] & [INSERT DATA] & [INSERT DATA] \\
-Ours (Lazy/Slack/Max\_Drop) & [INSERT DATA] & [INSERT DATA] & [INSERT DATA] & [INSERT DATA] \\
+Baseline (Sliding Window, no KV) & 97.91 & 1.00$\times$ & 19.761 & 5723 \\
+StreamingLLM (Start+Recent; strict prune) & 19.57 & 5.00$\times$ & 20.181 & 6941 \\
+Ours (Lazy Pruning) & 14.37 & 6.81$\times$ & 20.318 & 6941 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\begin{table}[t]
+\begin{table}[H]
 \centering
 \caption{Sanity-check results on WikiText-103 (short-context).}
 \small
@@ -21,9 +21,9 @@ Ours (Lazy/Slack/Max\_Drop) & [INSERT DATA] & [INSERT DATA] & [INSERT DATA] & [I
 \toprule
 Method & TPOT$\downarrow$ & Speedup$\uparrow$ & PPL$\downarrow$ \\
 \midrule
-Baseline (Full KV) & 98.86 & 1.00$\times$ & 9.359 \\
-StreamingLLM (MIT) & [INSERT DATA] & [INSERT DATA] & [INSERT DATA] \\
-Ours (Lazy/Slack/Max\_Drop) & [INSERT DATA] & [INSERT DATA] & [INSERT DATA] \\
+Baseline (Sliding Window, no KV) & 97.36 & 1.00$\times$ & 9.359 \\
+StreamingLLM (Start+Recent; strict prune) & 20.22 & 4.79$\times$ & 9.496 \\
+Ours (Lazy Pruning) & 14.45 & 6.68$\times$ & 9.519 \\
 \bottomrule
 \end{tabular}
 \end{table}

@@ -29,6 +29,25 @@ fi
 
 echo "Building: $REPO_ROOT/NeurIPS/$TEX"
 
+if command -v python >/dev/null 2>&1; then
+  # Regenerate lightweight assets from existing JSON results (no GPU required).
+  python "$REPO_ROOT/experiments/paper/generate_fig1_kv_length.py" \
+    --results-dir "$REPO_ROOT/results/paper_experiments" \
+    --steps 256 \
+    --out-tex "$REPO_ROOT/NeurIPS/generated/fig1_kv_length.tex" >/dev/null || true
+  python "$REPO_ROOT/experiments/paper/generate_ablations_tex.py" \
+    --results-dir "$REPO_ROOT/results/paper_experiments" \
+    --out "$REPO_ROOT/NeurIPS/generated/ablations.tex" >/dev/null || true
+  python "$REPO_ROOT/experiments/paper/generate_negative_results_tex.py" \
+    --out "$REPO_ROOT/NeurIPS/generated/negative_results.tex" >/dev/null || true
+  python "$REPO_ROOT/experiments/paper/generate_profile_prune_overhead_tex.py" \
+    --in-csv "$REPO_ROOT/results/probes/profile_prune_overhead/pg19_S32_cap2048_sigma16_delta0_summary.csv" \
+    --out "$REPO_ROOT/NeurIPS/generated/profile_prune_overhead.tex" >/dev/null || true
+  python "$REPO_ROOT/experiments/paper/generate_wikitext_sanity_tex.py" \
+    --results-dir "$REPO_ROOT/results/paper_experiments" \
+    --out "$REPO_ROOT/NeurIPS/generated/wikitext_sanity.tex" >/dev/null || true
+fi
+
 pdflatex -interaction=nonstopmode -halt-on-error "$TEX" >/dev/null
 
 if command -v bibtex >/dev/null 2>&1; then
@@ -40,4 +59,3 @@ pdflatex -interaction=nonstopmode -halt-on-error "$TEX" >/dev/null
 pdflatex -interaction=nonstopmode -halt-on-error "$TEX" >/dev/null
 
 echo "OK: $REPO_ROOT/NeurIPS/$JOB.pdf"
-

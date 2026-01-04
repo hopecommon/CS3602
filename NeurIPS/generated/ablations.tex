@@ -1,14 +1,16 @@
-\begin{table}[t]
+\begin{table}[H]
 \centering
-\caption{Ablation study for Slack and Max\_Drop (PG19).}
+\caption{Ablation ladder on PG19 (aligned $S,W$). Differences below \textasciitilde1\% may fall within run-to-run noise unless stated otherwise.}
 \small
 \begin{tabular}{lccc}
 \toprule
 Setting & TPOT$\downarrow$ & Speedup$\uparrow$ & PPL$\downarrow$ \\
 \midrule
-w/o Slack ($\sigma=0$) & [INSERT DATA] & [INSERT DATA] & [INSERT DATA] \\
-w/o Max\_Drop ($\delta=0$) & [INSERT DATA] & [INSERT DATA] & [INSERT DATA] \\
-Full (Lazy+Slack+Max\_Drop) & [INSERT DATA] & [INSERT DATA] & [INSERT DATA] \\
+Start+Recent (strict prune) ($R{=}1$) & 19.57 & 5.00$\times$ & 20.181 \\
+Start+Recent (strict prune; framework-only) ($R{=}1$) & 20.02 & 4.89$\times$ & 20.181 \\
++ Lazy Pruning ($R{=}64$) & 14.38 & 6.80$\times$ & 20.318 \\
++ (expl.) Slack ($R{=}64$, $\sigma{=}16$) & 14.35 & 6.82$\times$ & 20.262 \\
++ (expl.) Slack + Max\_Drop ($R{=}64$, $\sigma{=}16$, $\delta{=}32$) & 14.53 & 6.74$\times$ & 20.272 \\
 \bottomrule
 \end{tabular}
 \end{table}

@@ -1,0 +1,22 @@
+{
+  "method": "mit_eval_long_ppl",
+  "model": "EleutherAI/pythia-2.8b",
+  "dataset": "pg19",
+  "task": "pg19",
+  "split": "test",
+  "data_json": "data/pg19/long_context_50000.json",
+  "text_key": "text",
+  "max_eval_tokens": 20000,
+  "num_eval_tokens": 20000,
+  "start_size": 32,
+  "recent_size": 2016,
+  "enable_pos_shift": false,
+  "metrics": {
+    "perplexity": 239.0,
+    "runtime_sec": 487.6889375,
+    "first_token_latency_sec": 0.785902587890625,
+    "eval_tokens": 19999,
+    "tpot_ms": 24.385666158307917,
+    "peak_memory_mb": 695.0537109375
+  }
+}

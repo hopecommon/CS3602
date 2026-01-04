@@ -1,0 +1,76 @@
+{
+  "model": "EleutherAI/pythia-2.8b",
+  "dataset": "pg19:pg19",
+  "split": "test",
+  "max_length": 2048,
+  "stride": 1022,
+  "max_samples": 1,
+  "max_eval_tokens": 20000,
+  "total_tokens": 20000,
+  "dataset_selector": {
+    "PG19_SAMPLE_FILE": "data/pg19/long_context_50000.json",
+    "PG19_SAMPLE_LENGTH": "50000",
+    "WIKITEXT_SAMPLE_FILE": "data/wikitext/long_context_4096.json",
+    "WIKITEXT_SAMPLE_LENGTH": "4096"
+  },
+  "streaming_llm": {
+    "n_sink": 32,
+    "window_size": 2016,
+    "overlap": 0,
+    "refresh_budget": 0,
+    "refresh_policy": "none",
+    "compress_every": 64,
+    "max_drop": 16,
+    "cache_slack": 0,
+    "implementation": "ours",
+    "cache_type": "StreamingKVCache",
+    "max_cache_size": 2048
+  },
+  "device": "cuda",
+  "dtype": "torch.float16",
+  "baseline_source": "loaded:results/paper_experiments/pg19_baseline.json",
+  "env": {
+    "git_commit": "3cb8e4bdd8b3fe6acbefc81a808510c829dcb4a8",
+    "python": "3.12.7",
+    "platform": "Linux-5.15.0-161-generic-x86_64-with-glibc2.35",
+    "torch": "2.9.1+cu128",
+    "cuda": "12.8",
+    "transformers": "4.57.3",
+    "hf_datasets": "2.21.0",
+    "gpu_name": "NVIDIA A800 80GB PCIe",
+    "driver": "535.216.01",
+    "pg19_sample_file": "data/pg19/long_context_50000.json",
+    "pg19_sample_length": "50000",
+    "wikitext_sample_file": "data/wikitext/long_context_4096.json",
+    "wikitext_sample_length": "4096"
+  },
+  "baseline": {
+    "perplexity": 19.761051177978516,
+    "runtime_sec": 1758.043125,
+    "prefill_sec": 0.4218440551757813,
+    "first_token_latency_sec": 0.09493971252441406,
+    "decode_tokens": 17952,
+    "decode_time_sec": 1757.621280944824,
+    "tpot_ms": 97.90671128257709,
+    "peak_memory_mb": 5722.51171875
+  },
+  "streaming": {
+    "perplexity": 20.317981719970703,
+    "runtime_sec": 259.936328125,
+    "prefill_sec": 0.3246292724609375,
+    "first_token_latency_sec": 0.15006541442871094,
+    "decode_tokens": 17952,
+    "decode_time_sec": 259.61169885253906,
+    "tpot_ms": 14.461435987775126,
+    "peak_memory_mb": 6941.4365234375
+  },
+  "metrics": {
+    "compression_ratio": 0.8976,
+    "first_token_latency_sec": 0.15006541442871094,
+    "tpot_ms": 14.461435987775126,
+    "peak_memory_mb": 6941.4365234375,
+    "speedup": 6.76336061866112,
+    "ppl_increase_percent": 2.8183244756373305,
+    "peak_memory_ratio": 1.2130052090052785
+  }
+}

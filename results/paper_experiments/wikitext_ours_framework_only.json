@@ -1,0 +1,91 @@
+{
+  "model": "EleutherAI/pythia-2.8b",
+  "dataset": "wikitext:wikitext-103-v1",
+  "split": "test",
+  "max_length": 2048,
+  "stride": 1022,
+  "max_samples": 64,
+  "max_eval_tokens": 4096,
+  "total_tokens": 4096,
+  "streaming_llm": {
+    "n_sink": 32,
+    "window_size": 2016,
+    "overlap": 0,
+    "refresh_budget": 0,
+    "refresh_policy": "none",
+    "compress_every": 1,
+    "max_drop": 0,
+    "cache_slack": 0,
+    "implementation": "ours",
+    "cache_type": "StartRecentKVCache",
+    "max_cache_size": 2048
+  },
+  "device": "cuda",
+  "dtype": "torch.float16",
+  "baseline_source": "loaded:results/paper_experiments/wikitext_baseline.json",
+  "env": {
+    "git_commit": "3cb8e4bdd8b3fe6acbefc81a808510c829dcb4a8",
+    "python": "3.12.7",
+    "platform": "Linux-5.15.0-161-generic-x86_64-with-glibc2.35",
+    "torch": "2.9.1+cu128",
+    "cuda": "12.8",
+    "transformers": "4.57.3",
+    "hf_datasets": "2.21.0",
+    "gpu_name": "NVIDIA A800 80GB PCIe",
+    "driver": "535.216.01",
+    "pg19_sample_file": "data/pg19/long_context_50000.json",
+    "pg19_sample_length": "50000",
+    "wikitext_sample_file": "data/wikitext/long_context_4096.json",
+    "wikitext_sample_length": "4096"
+  },
+  "baseline": {
+    "perplexity": 9.359184265136719,
+    "perplexity_std": 0.0,
+    "runtime_sec": 199.773296875,
+    "runtime_sec_std": 0.0,
+    "prefill_sec": 0.4110489501953125,
+    "prefill_sec_std": 0.0,
+    "first_token_latency_sec": 0.09403968048095702,
+    "first_token_latency_sec_std": 0.0,
+    "decode_tokens": 2048,
+    "decode_tokens_std": 0.0,
+    "decode_time_sec": 199.36224792480468,
+    "decode_time_sec_std": 0.0,
+    "tpot_ms": 97.34484761953354,
+    "tpot_ms_std": 0.0,
+    "peak_memory_mb": 5722.39013671875,
+    "peak_memory_mb_std": 0.0
+  },
+  "streaming": {
+    "perplexity": 9.496405601501465,
+    "perplexity_std": 0.0,
+    "runtime_sec": 41.46109765625,
+    "runtime_sec_std": 0.0,
+    "prefill_sec": 0.331359375,
+    "prefill_sec_std": 0.0,
+    "first_token_latency_sec": 0.14225900268554686,
+    "first_token_latency_sec_std": 0.0,
+    "decode_tokens": 2048,
+    "decode_tokens_std": 0.0,
+    "decode_time_sec": 41.12973828125,
+    "decode_time_sec_std": 0.0,
+    "tpot_ms": 20.0828800201416,
+    "tpot_ms_std": 0.0,
+    "peak_memory_mb": 6941.31494140625,
+    "peak_memory_mb_std": 0.0
+  },
+  "metrics": {
+    "speedup": 4.818331114417214,
+    "ppl_increase_percent": 1.4661676966431814,
+    "tpot_ms": 20.0828800201416,
+    "peak_memory_mb": 6941.31494140625
+  },
+  "config_hash": "2c541a2e1bdb0fa6",
+  "repeats": {
+    "warmup": 0,
+    "runs": 1,
+    "run_paths": [
+      "results/paper_experiments/wikitext_ours_framework_only_runs/run_1.json"
+    ]
+  }
+}

@@ -1,0 +1,14 @@
+\begin{table}[H]
+\centering
+\caption{Sanity-check results on WikiText-103 (short-context).}
+\small
+\begin{tabular}{lccc}
+\toprule
+Method & TPOT$\downarrow$ & Speedup$\uparrow$ & PPL$\downarrow$ \\
+\midrule
+Baseline (Sliding Window, no KV) & 97.36 & 1.00$\times$ & 9.359 \\
+StreamingLLM (Start+Recent; strict prune) & 20.22 & 4.82$\times$ & 9.496 \\
+Ours (Lazy Pruning) & 14.45 & 6.74$\times$ & 9.519 \\
+\bottomrule
+\end{tabular}
+\end{table}

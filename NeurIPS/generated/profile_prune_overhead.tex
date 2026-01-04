@@ -1,0 +1,14 @@
+\begin{table}[H]
+\centering
+\caption{Profiling evidence for amortization (PG19 probe; fixed $C_{\text{cap}}=2048$, $S=32$, $\sigma=16$): forward time stays nearly constant while cache-update overhead is amortized by increasing $R$.}
+\label{tab:profile_prune}
+\small
+\begin{tabular}{lcccc}
+\toprule
+Setting & Prune events & Forward (ms) & Update (ms) & Total (ms) \\
+\midrule
+Strict ($R=1$) & 2000 & 14.12 & 5.57 & 19.69 \\
+Lazy ($R=64$) & 31 & 14.03 & 0.09 & 14.12 \\
+\bottomrule
+\end{tabular}
+\end{table}

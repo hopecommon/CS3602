@@ -1,9 +1,9 @@
 {
   "method": "kvpress",
   "dataset": "pg19:",
-  "perplexity": 8.994733810424805,
-  "total_time": 387.45159375,
-  "prefill_time": 0.6416158447265625,
-  "first_token_latency_sec": 0.02250809669494629,
+  "perplexity": 20.818979263305664,
+  "total_time": 358.2030625,
+  "prefill_time": 0.53622607421875,
+  "first_token_latency_sec": 0.022476192474365234,
   "mode": "kvpress"
 }

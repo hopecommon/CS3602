@@ -2,8 +2,8 @@
   "method": "kvpress",
   "dataset": "wikitext:wikitext-103-v1",
   "perplexity": 9.653788566589355,
-  "total_time": 46.64071484375,
-  "prefill_time": 0.7399282836914063,
-  "first_token_latency_sec": 0.022664352416992186,
+  "total_time": 42.38941015625,
+  "prefill_time": 0.599025634765625,
+  "first_token_latency_sec": 0.02275676727294922,
   "mode": "kvpress"
 }

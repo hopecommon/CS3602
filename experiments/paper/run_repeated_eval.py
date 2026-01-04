@@ -103,7 +103,9 @@ def main() -> int:
             if existing.get("config_hash") == cfg_hash:
                 print(f"Skip existing (config match): {args.out}")
                 return 0
-            if os.environ.get("ALLOW_STALE_RESULTS", "0") == "1":
+            # Default to allowing stale reuse to avoid surprising reruns in iterative workflows.
+            # Set ALLOW_STALE_RESULTS=0 (or pass -f in the bash runner) to force reruns.
+            if os.environ.get("ALLOW_STALE_RESULTS", "1") == "1":
                 print(f"⚠ Existing output config mismatch; keeping stale result due to ALLOW_STALE_RESULTS=1: {args.out}")
                 return 0
             print(f"Existing output config mismatch; rerunning: {args.out}")

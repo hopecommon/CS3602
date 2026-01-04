@@ -18,6 +18,10 @@ class EnvInfo:
     hf_datasets: Optional[str]
     gpu_name: Optional[str]
     driver: Optional[str]
+    pg19_sample_file: Optional[str] = None
+    pg19_sample_length: Optional[str] = None
+    wikitext_sample_file: Optional[str] = None
+    wikitext_sample_length: Optional[str] = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -71,6 +75,10 @@ def collect_env_info(repo_root: str | None = None) -> EnvInfo:
         hf_datasets=_safe_version("datasets"),
         gpu_name=gpu_name,
         driver=_nvidia_smi_driver(),
+        pg19_sample_file=os.environ.get("PG19_SAMPLE_FILE"),
+        pg19_sample_length=os.environ.get("PG19_SAMPLE_LENGTH"),
+        wikitext_sample_file=os.environ.get("WIKITEXT_SAMPLE_FILE"),
+        wikitext_sample_length=os.environ.get("WIKITEXT_SAMPLE_LENGTH"),
     )
 
 
@@ -86,4 +94,3 @@ def env_compatible(a: dict[str, Any] | None, b: dict[str, Any] | None) -> bool:
         if a.get(k) != b.get(k):
             return False
     return True
-

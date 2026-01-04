@@ -95,14 +95,44 @@ def _resolve_pg19_sample_path() -> Optional[Path]:
     if not candidates:
         return None
 
+    def read_title(p: Path) -> str:
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+            if isinstance(data, list):
+                data = data[0] if data else {}
+            if isinstance(data, dict):
+                return str(data.get("short_book_title") or data.get("title") or "").strip()
+        except Exception:
+            return ""
+        return ""
+
+    # Default: largest cached sample (most tokens in filename).
+    candidates.sort(key=lambda p: (_extract_length_from_name(p) or 0, p.name), reverse=True)
+    canonical = candidates[0]
+    canonical_title = read_title(canonical)
+
+    # Optional: allow selecting by cached filename length.
+    # WARNING: if your cached files were generated from different PG19 books per length,
+    #          `PG19_SAMPLE_LENGTH` will silently switch the underlying book and thus PPL.
     target_length = os.environ.get("PG19_SAMPLE_LENGTH")
     if target_length:
-        chosen = [p for p in candidates if _extract_length_from_name(p) == int(target_length)]
+        target = int(target_length)
+        chosen = [p for p in candidates if _extract_length_from_name(p) == target]
         if chosen:
-            return chosen[0]
+            picked = chosen[0]
+            picked_title = read_title(picked)
+            if canonical_title and picked_title and canonical_title != picked_title:
+                print(
+                    "WARNING: PG19 sample selection changed the underlying book.\n"
+                    f"    canonical: {canonical.name}  title={canonical_title!r}\n"
+                    f"    selected : {picked.name}  title={picked_title!r}\n"
+                    "    If you want stable PPL across scripts/runs, prefer pinning "
+                    "`PG19_SAMPLE_FILE` to a single cached file and control token length "
+                    "via `--max-eval-tokens` / `PG19_*_MAX_TOKENS`."
+                )
+            return picked
 
-    candidates.sort(key=lambda p: (_extract_length_from_name(p) or 0, p.name), reverse=True)
-    return candidates[0]
+    return canonical
 
 
 def _resolve_wikitext_sample_path() -> Optional[Path]:
@@ -191,7 +221,21 @@ def load_tokenized_dataset(
 
         sample_path = _resolve_pg19_sample_path()
         if sample_path:
-            print(f"✓ 使用预采样 PG19 样本: {sample_path.name}")
+            # Print extra metadata to make accidental sample switches obvious.
+            try:
+                meta = _load_json_entries(sample_path)[0]
+                title = (meta.get("short_book_title") or meta.get("title") or "").strip()
+                target_tokens = meta.get("target_tokens")
+                available_tokens = meta.get("available_tokens")
+                if title or target_tokens or available_tokens:
+                    print(
+                        f"✓ 使用预采样 PG19 样本: {sample_path.name} "
+                        f"(title={title!r}, target_tokens={target_tokens}, available_tokens={available_tokens})"
+                    )
+                else:
+                    print(f"✓ 使用预采样 PG19 样本: {sample_path.name}")
+            except Exception:
+                print(f"✓ 使用预采样 PG19 样本: {sample_path.name}")
             entries = _load_json_entries(sample_path)
             if not entries:
                 raise ValueError(f"{sample_path} 中未包含有效样本")
@@ -319,6 +363,7 @@ def compute_perplexity(
     streaming_wrapper = None,
     max_cache_size: Optional[int] = None,
     cache_implementation: Optional[str] = None,
+    fp32_loss: bool = False,
 ) -> PerplexityResult:
     """
     计算 perplexity
@@ -349,6 +394,7 @@ def compute_perplexity(
             max_cache_size=max_cache_size,
             streaming_wrapper=wrapper,
             cache_implementation=cache_implementation,
+            fp32_loss=fp32_loss,
         )
 
     nlls = []
@@ -418,6 +464,7 @@ def _compute_streaming_decode_perplexity(
     max_cache_size: int,
     streaming_wrapper = None,
     cache_implementation: Optional[str] = None,
+    fp32_loss: bool = False,
 ) -> PerplexityResult:
     """
     使用解码式评估 (逐 token) 计算 PPL 和时间
@@ -525,6 +572,8 @@ def _compute_streaming_decode_perplexity(
                 first_end_evt.record()
 
             logits = outputs.logits[:, -1, :]
+            if fp32_loss:
+                logits = logits.float()
             loss = F.cross_entropy(
                 logits,
                 target,
@@ -553,6 +602,8 @@ def _compute_streaming_decode_perplexity(
             logits = outputs.logits[:, :-1, :]
             labels = input_ids[:, 1:]
             if labels.numel() > 0:
+                if fp32_loss:
+                    logits = logits.float()
                 loss = F.cross_entropy(
                     logits.reshape(-1, logits.size(-1)),
                     labels.reshape(-1),
@@ -594,6 +645,8 @@ def _compute_streaming_decode_perplexity(
                     first_end_evt.record()
 
                 logits = outputs.logits[:, -1, :]
+                if fp32_loss:
+                    logits = logits.float()
                 loss = F.cross_entropy(
                     logits,
                     target,
@@ -613,7 +666,9 @@ def _compute_streaming_decode_perplexity(
         torch.cuda.synchronize()
         total_time = start_evt.elapsed_time(end_evt) / 1000.0
         prefill_time = start_evt.elapsed_time(prefill_end_evt) / 1000.0
-        if total_tokens > 0:
+        # If `seq_len <= max_cache_size`, the decode loop can be empty, meaning
+        # the first-token events were never recorded.
+        if first_token_recorded:
             first_token_time = first_start_evt.elapsed_time(first_end_evt) / 1000.0
     else:
         total_time = time.perf_counter() - total_start

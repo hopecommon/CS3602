@@ -4,6 +4,10 @@ set -euo pipefail
 # 修复后的评测脚本 - 使用 decode-loop 逐 token 解码（可比）
 # baseline / ours / mit / kvpress 都走同一条 decode-loop 评测逻辑。
 
+# Ensure we run from the repo root even when invoked via an absolute path.
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$REPO_ROOT"
+
 # 读取 .env 自定义配置
 ENV_FILE=".env"
 if [ -f "$ENV_FILE" ]; then
@@ -124,7 +128,7 @@ if [[ "${RUN_MIT_OFFICIAL_BENCHMARK:-0}" == "1" ]]; then
   # MIT 官方 repo 对 transformers/huggingface-hub 版本较敏感，建议用独立环境的 python 运行。
   MIT_BENCH_PYTHON="${MIT_BENCH_PYTHON:-$PYTHON}"
   MIT_BENCH_MODEL_PATH="${MIT_BENCH_MODEL_PATH:-$MODEL_NAME}"
-  MIT_BENCH_DATA_JSON="${MIT_BENCH_DATA_JSON:-${PG19_SAMPLE_FILE:-data/pg19/long_context_20000.json}}"
+  MIT_BENCH_DATA_JSON="${MIT_BENCH_DATA_JSON:-${PG19_SAMPLE_FILE:-data/pg19/long_context_50000.json}}"
   mkdir -p results/mit_official
   "$PYTHON" experiments/run_mit_official_benchmark.py \
     --python "$MIT_BENCH_PYTHON" \

@@ -1,0 +1,22 @@
+{
+  "method": "mit_eval_long_ppl",
+  "model": "EleutherAI/pythia-2.8b",
+  "dataset": "wikitext",
+  "task": "wikitext-103-v1",
+  "split": "test",
+  "data_json": "data/wikitext/long_context_4096.json",
+  "text_key": "text",
+  "max_eval_tokens": 4096,
+  "num_eval_tokens": 4096,
+  "start_size": 32,
+  "recent_size": 2016,
+  "enable_pos_shift": false,
+  "metrics": {
+    "perplexity": 40.8125,
+    "runtime_sec": 97.8095859375,
+    "first_token_latency_sec": 0.72774755859375,
+    "eval_tokens": 4095,
+    "tpot_ms": 23.88512477106227,
+    "peak_memory_mb": 687.2880859375
+  }
+}

@@ -25,6 +25,8 @@ def falcon_pos_shift_attention_forward(
     head_mask: Optional[torch.Tensor] = None,
     use_cache: bool = False,
     output_attentions: bool = False,
+    cache_position: Optional[torch.LongTensor] = None,
+    **kwargs,
 ):
     fused_qkv = self.query_key_value(
         hidden_states

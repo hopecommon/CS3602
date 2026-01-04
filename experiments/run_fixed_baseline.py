@@ -56,6 +56,7 @@ def _run_baseline(
         "--max-eval-tokens", str(max_eval_tokens),
         "--max-samples", str(max_samples),
         "--mode", "baseline",
+        "--fp32-loss",
         "--n-sink", str(args.n_sink),
         "--window-size", str(args.window_size),
         "--overlap", "0",

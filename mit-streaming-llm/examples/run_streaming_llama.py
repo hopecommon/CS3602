@@ -95,7 +95,7 @@ def main(args):
 
     if args.enable_streaming:
         kv_cache = enable_streaming_llm(
-            model, start_size=args.start_size, recent_size=args.recent_size
+            model, start_size=args.start_size, recent_size=args.recent_size, enable_pos_shift=False
         )
     else:
         kv_cache = None
